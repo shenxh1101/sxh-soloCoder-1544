@@ -17,6 +17,11 @@ import type {
   BalanceRecord,
   FollowUpRecord,
   MemberProfile,
+  MarketingCampaign,
+  CampaignMemberStatus,
+  LifecycleSegment,
+  ReviewStats,
+  LifecycleGroup,
 } from '@/types';
 import {
   initialBarbers,
@@ -31,6 +36,7 @@ import {
   generateInitialExchangeRecords,
   generateInitialBalanceRecords,
   generateInitialFollowUpRecords,
+  generateInitialCampaigns,
 } from '@/utils/mockData';
 
 const genId = () => Math.random().toString(36).substring(2, 10);
@@ -50,6 +56,7 @@ const initPointsRecords = generateInitialPointsRecords(initMembers);
 const initExchangeRecords = generateInitialExchangeRecords(initMembers, initialPointsRule.exchangeItems);
 const initBalanceRecords = generateInitialBalanceRecords(initMembers, initRechargeRecords, initConsumptionRecords);
 const initFollowUpRecords = generateInitialFollowUpRecords(initMembers);
+const initCampaigns = generateInitialCampaigns(initMembers);
 
 interface AppState {
   barbers: Barber[];
@@ -61,6 +68,7 @@ interface AppState {
   exchangeRecords: ExchangeRecord[];
   balanceRecords: BalanceRecord[];
   followUpRecords: FollowUpRecord[];
+  marketingCampaigns: MarketingCampaign[];
   servicePackages: ServicePackage[];
   rechargeRules: RechargeRule[];
   pointsRule: PointsRule;
@@ -75,7 +83,7 @@ interface AppState {
   rescheduleAppointment: (id: string, data: { date: string; startTime: string; endTime: string; barberId: string }) => boolean;
 
   rechargeMember: (memberId: string, ruleId: string | undefined, amount: number, bonus: number) => void;
-  consumeMember: (memberId: string, barberId: string | undefined, packageId: string | undefined, amount: number, note?: string) => void;
+  consumeMember: (memberId: string, barberId: string | undefined, packageId: string | undefined, amount: number, note?: string, appointmentId?: string) => void;
 
   exchangePoints: (memberId: string, rewardId: string, rewardName: string, pointsUsed: number) => void;
   addExchangeItem: (item: Omit<PointsRule['exchangeItems'][number], 'id'>) => void;
@@ -111,6 +119,22 @@ interface AppState {
   }) => Member[];
   addMemberTag: (memberId: string, tag: string) => void;
   removeMemberTag: (memberId: string, tag: string) => void;
+
+  getMemberLifecycle: (memberId: string) => LifecycleSegment;
+  getLifecycleMembers: (segment: LifecycleSegment) => Member[];
+  getLifecycleStats: () => Record<LifecycleSegment, number>;
+  getLifecycleGroups: () => LifecycleGroup[];
+
+  createMarketingCampaign: (data: Omit<MarketingCampaign, 'id' | 'members' | 'createdAt'> & { memberIds: string[] }) => void;
+  updateCampaignMemberStatus: (campaignId: string, memberId: string, status: CampaignMemberStatus, note?: string) => void;
+  deleteMarketingCampaign: (campaignId: string) => void;
+
+  reconcileMemberBalance: (memberId: string) => { balanced: boolean; diff: number; fixed: boolean };
+  getConsumptionByAppointment: (appointmentId: string) => ConsumptionRecord | undefined;
+  getAppointmentByConsumption: (consumptionId: string) => Appointment | undefined;
+  getAppointmentById: (id: string) => Appointment | undefined;
+
+  getReviewStats: (period: 'week' | 'month', offset?: number) => ReviewStats;
 }
 
 export const useAppStore = create<AppState>()(
@@ -125,6 +149,7 @@ export const useAppStore = create<AppState>()(
       exchangeRecords: initExchangeRecords,
       balanceRecords: initBalanceRecords,
       followUpRecords: initFollowUpRecords,
+      marketingCampaigns: initCampaigns,
       servicePackages: initialServicePackages,
       rechargeRules: initialRechargeRules,
       pointsRule: initialPointsRule,
@@ -256,7 +281,7 @@ export const useAppStore = create<AppState>()(
         });
       },
 
-      consumeMember: (memberId, barberId, packageId, amount, note) => {
+      consumeMember: (memberId, barberId, packageId, amount, note, appointmentId) => {
         const now = dayjs().format('YYYY-MM-DD HH:mm');
         const rule = get().pointsRule;
         const pointsPerYuan = rule.pointsPerYuan;
@@ -270,6 +295,14 @@ export const useAppStore = create<AppState>()(
           const newBalance = Math.max(0, member.balance - amount);
           const newLevel: MemberLevel =
             newBalance > 2000 ? '钻石会员' : newBalance > 800 ? '金卡会员' : newBalance > 300 ? '银卡会员' : '普通会员';
+
+          let newAppointments = state.appointments;
+          if (appointmentId) {
+            newAppointments = state.appointments.map(a =>
+              a.id === appointmentId ? { ...a, consumptionId: consumeRecId } : a
+            );
+          }
+
           return {
             members: state.members.map((m) =>
               m.id === memberId
@@ -282,6 +315,7 @@ export const useAppStore = create<AppState>()(
                   }
                 : m
             ),
+            appointments: newAppointments,
             consumptionRecords: [
               {
                 id: consumeRecId,
@@ -292,6 +326,7 @@ export const useAppStore = create<AppState>()(
                 pointsEarned,
                 createdAt: now,
                 note,
+                appointmentId,
               },
               ...state.consumptionRecords,
             ],
@@ -575,6 +610,9 @@ export const useAppStore = create<AppState>()(
           appointments: state.appointments.map(a =>
             a.id === appointmentId ? { ...a, consumptionId, followUpNote: followUpNote || a.followUpNote } : a
           ),
+          consumptionRecords: state.consumptionRecords.map(c =>
+            c.id === consumptionId ? { ...c, appointmentId } : c
+          ),
         }));
       },
 
@@ -640,6 +678,173 @@ export const useAppStore = create<AppState>()(
             m.id === memberId ? { ...m, tags: (m.tags || []).filter(t => t !== tag) } : m
           ),
         }));
+      },
+
+      getMemberLifecycle: (memberId) => {
+        const state = get();
+        const member = state.members.find(m => m.id === memberId);
+        if (!member) return 'new';
+        const profile = state.getMemberProfile(memberId);
+        if (profile.totalSpend >= 2000 && (profile.freqLevel === '常客' || profile.freqLevel === '忠实')) return 'high_value';
+        const regDays = dayjs().diff(dayjs(member.createdAt.substring(0, 10)), 'day');
+        if (regDays <= 30 && profile.visitCount <= 2) return 'new';
+        if (profile.daysSinceLastVisit > 30) return 'sleeping';
+        return 'active';
+      },
+
+      getLifecycleMembers: (segment) => {
+        const state = get();
+        return state.members.filter(m => state.getMemberLifecycle(m.id) === segment);
+      },
+
+      getLifecycleStats: () => {
+        const state = get();
+        const result = { new: 0, active: 0, sleeping: 0, high_value: 0 } as Record<LifecycleSegment, number>;
+        state.members.forEach(m => {
+          result[state.getMemberLifecycle(m.id)]++;
+        });
+        return result;
+      },
+
+      getLifecycleGroups: () => [
+        { key: 'new', name: '新客', icon: '🌱', color: 'green', bg: 'from-green-50 to-emerald-50 border-green-200', description: '注册30天内，到店≤2次', suggestions: ['推荐办卡套餐', '首次消费小礼品', '添加微信保持联系'] },
+        { key: 'active', name: '活跃客', icon: '🔥', color: 'orange', bg: 'from-orange-50 to-amber-50 border-orange-200', description: '30天内有到店记录', suggestions: ['常规服务推荐', '亲友同行优惠', '积分兑换提醒'] },
+        { key: 'sleeping', name: '沉睡客', icon: '💤', color: 'purple', bg: 'from-purple-50 to-violet-50 border-purple-200', description: '超过30天未到店', suggestions: ['专属召回福利', '电话或短信唤醒', '新活动通知'] },
+        { key: 'high_value', name: '高价值客', icon: '💎', color: 'gold', bg: 'from-amber-50 to-yellow-50 border-amber-200', description: '累计消费≥2000且常客/忠实', suggestions: ['VIP专属服务', '高端护理推荐', '生日/节日关怀'] },
+      ],
+
+      createMarketingCampaign: (data) => {
+        const now = dayjs().format('YYYY-MM-DD HH:mm');
+        set(state => ({
+          marketingCampaigns: [
+            {
+              id: genId(),
+              name: data.name,
+              description: data.description,
+              filters: data.filters,
+              members: data.memberIds.map(memberId => ({ memberId, status: 'pending' as const })),
+              createdAt: now,
+            },
+            ...state.marketingCampaigns,
+          ],
+        }));
+      },
+
+      updateCampaignMemberStatus: (campaignId, memberId, status, note) => {
+        const now = dayjs().format('YYYY-MM-DD HH:mm');
+        set(state => ({
+          marketingCampaigns: state.marketingCampaigns.map(c =>
+            c.id === campaignId
+              ? {
+                  ...c,
+                  members: c.members.map(m =>
+                    m.memberId === memberId
+                      ? { ...m, status, contactedAt: status !== 'pending' ? now : m.contactedAt, note: note || m.note }
+                      : m
+                  ),
+                }
+              : c
+          ),
+        }));
+      },
+
+      deleteMarketingCampaign: (campaignId) => {
+        set(state => ({
+          marketingCampaigns: state.marketingCampaigns.filter(c => c.id !== campaignId),
+        }));
+      },
+
+      reconcileMemberBalance: (memberId) => {
+        const state = get();
+        const member = state.members.find(m => m.id === memberId);
+        if (!member) return { balanced: false, diff: 0, fixed: false };
+
+        const records = state.balanceRecords
+          .filter(r => r.memberId === memberId)
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+        let running = 0;
+        records.forEach(r => { running += r.amount; });
+
+        const diff = member.balance - running;
+        if (Math.abs(diff) < 0.01) return { balanced: true, diff: 0, fixed: false };
+
+        const now = dayjs().format('YYYY-MM-DD HH:mm');
+        const desc = diff > 0 ? `余额补登（对账差异 ¥${diff.toFixed(2)}）` : `余额扣减（对账差异 ¥${Math.abs(diff).toFixed(2)}）`;
+        set(s => ({
+          balanceRecords: [
+            { id: genId(), memberId, type: 'adjust', amount: diff, balanceAfter: member.balance, description: desc, createdAt: now },
+            ...s.balanceRecords,
+          ],
+        }));
+        return { balanced: false, diff, fixed: true };
+      },
+
+      getConsumptionByAppointment: (appointmentId) => {
+        return get().consumptionRecords.find(c => c.appointmentId === appointmentId);
+      },
+
+      getAppointmentByConsumption: (consumptionId) => {
+        return get().appointments.find(a => a.consumptionId === consumptionId);
+      },
+      getAppointmentById: (id) => {
+        return get().appointments.find(a => a.id === id);
+      },
+
+      getReviewStats: (period, offset = 0) => {
+        const state = get();
+        const now = dayjs();
+        const base = period === 'week' ? now.subtract(offset * 7, 'day') : now.subtract(offset, 'month');
+        const start = period === 'week' ? base.startOf('week') : base.startOf('month');
+        const end = period === 'week' ? base.endOf('week') : base.endOf('month');
+        const startStr = start.format('YYYY-MM-DD');
+        const endStr = end.format('YYYY-MM-DD');
+        const periodLabel = period === 'week'
+          ? `${start.format('M月D日')}-${end.format('M月D日')}`
+          : base.format('YYYY年M月');
+
+        const inPeriodAppointments = state.appointments.filter(a => a.date >= startStr && a.date <= endStr);
+        const completed = inPeriodAppointments.filter(a => a.status === 'completed').length;
+        const noShow = inPeriodAppointments.filter(a => a.status === 'no_show').length;
+        const cancelled = inPeriodAppointments.filter(a => a.status === 'cancelled').length;
+        const total = inPeriodAppointments.length;
+
+        const newMembers = state.members.filter(m => m.createdAt.substring(0, 10) >= startStr && m.createdAt.substring(0, 10) <= endStr).length;
+
+        const periodConsumptions = state.consumptionRecords.filter(c => c.createdAt.substring(0, 10) >= startStr && c.createdAt.substring(0, 10) <= endStr);
+        const totalRevenue = periodConsumptions.reduce((s, r) => s + r.amount, 0);
+        const memberRevenue = periodConsumptions.filter(c => state.members.some(m => m.id === c.memberId)).reduce((s, r) => s + r.amount, 0);
+
+        const activeMemberIds = new Set<string>();
+        periodConsumptions.forEach(c => activeMemberIds.add(c.memberId));
+        inPeriodAppointments.forEach(a => a.memberId && activeMemberIds.add(a.memberId));
+
+        const campaignCount = state.marketingCampaigns.filter(c => c.createdAt.substring(0, 10) >= startStr && c.createdAt.substring(0, 10) <= endStr).length;
+        const campaignContacted = state.marketingCampaigns.reduce((sum, c) =>
+          sum + c.members.filter(m => m.status !== 'pending' && (!m.contactedAt || (m.contactedAt.substring(0, 10) >= startStr && m.contactedAt.substring(0, 10) <= endStr))).length, 0);
+        const campaignConverted = state.marketingCampaigns.reduce((sum, c) =>
+          sum + c.members.filter(m => (m.status === 'consumed' || m.status === 'visited') && (!m.contactedAt || (m.contactedAt.substring(0, 10) >= startStr && m.contactedAt.substring(0, 10) <= endStr))).length, 0);
+
+        const stats: ReviewStats = {
+          period: periodLabel,
+          appointmentTotal: total,
+          appointmentCompleted: completed,
+          appointmentNoShow: noShow,
+          appointmentCancelled: cancelled,
+          completionRate: total > 0 ? completed / total : 0,
+          noShowRate: total > 0 ? noShow / total : 0,
+          newMembers,
+          activeMembers: activeMemberIds.size,
+          totalRevenue,
+          memberRevenue,
+          memberRevenueRatio: totalRevenue > 0 ? memberRevenue / totalRevenue : 0,
+          avgOrderValue: periodConsumptions.length > 0 ? totalRevenue / periodConsumptions.length : 0,
+          campaignCount,
+          campaignContacted,
+          campaignConverted,
+          campaignConversionRate: campaignContacted > 0 ? campaignConverted / campaignContacted : 0,
+        };
+        return stats;
       },
     }),
     {

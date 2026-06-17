@@ -12,6 +12,7 @@ import type {
   PointsRule,
   BalanceRecord,
   FollowUpRecord,
+  MarketingCampaign,
 } from '@/types';
 
 const genId = () => Math.random().toString(36).substring(2, 10);
@@ -316,4 +317,33 @@ export const generateInitialFollowUpRecords = (members: Member[]): FollowUpRecor
     });
   });
   return records;
+};
+
+export const generateInitialCampaigns = (members: Member[]): MarketingCampaign[] => {
+  return [
+    {
+      id: genId(),
+      name: '6月沉睡客户唤醒',
+      description: '针对30天以上未到店客户，推荐烫染护理套餐',
+      filters: { minDaysNotVisited: 30 },
+      members: members.slice(3, 8).map((m, i) => ({
+        memberId: m.id,
+        status: i < 2 ? 'contacted' : i < 3 ? 'consumed' : 'pending',
+        contactedAt: i < 3 ? dayjs().subtract(i, 'day').format('YYYY-MM-DD HH:mm') : undefined,
+      })),
+      createdAt: dayjs().subtract(7, 'day').format('YYYY-MM-DD HH:mm'),
+    },
+    {
+      id: genId(),
+      name: '金卡会员充值回馈',
+      description: '金卡及以上会员，充值满500送150活动',
+      filters: { levels: ['金卡会员', '钻石会员'] },
+      members: members.filter(m => m.level === '金卡会员' || m.level === '钻石会员').slice(0, 5).map((m, i) => ({
+        memberId: m.id,
+        status: i === 0 ? 'consumed' : i < 3 ? 'contacted' : 'pending',
+        contactedAt: i < 3 ? dayjs().subtract(i * 2, 'day').format('YYYY-MM-DD HH:mm') : undefined,
+      })),
+      createdAt: dayjs().subtract(3, 'day').format('YYYY-MM-DD HH:mm'),
+    },
+  ];
 };

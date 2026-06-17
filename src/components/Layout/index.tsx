@@ -8,6 +8,7 @@ import {
   Settings,
   Bell,
   Scissors,
+  TrendingUp,
 } from 'lucide-react';
 import { useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { useAppStore } from '@/store';
@@ -20,6 +21,7 @@ const menuItems = [
   { key: '/members', icon: <Users size={18} />, label: '会员管理' },
   { key: '/points', icon: <Coins size={18} />, label: '积分管理' },
   { key: '/statistics', icon: <BarChart3 size={18} />, label: '数据统计' },
+  { key: '/review', icon: <TrendingUp size={18} />, label: '经营复盘' },
   { key: '/settings', icon: <Settings size={18} />, label: '系统设置' },
 ];
 

@@ -6,12 +6,13 @@ import {
 import {
   Search, Plus, Wallet, ShoppingBag, Eye, UserPlus, AlertTriangle, Coins, Receipt, ChevronRight,
   Sparkles, PhoneCall, Heart, Megaphone, Target, TrendingUp, Clock, Star, Tag as TagIcon,
-  MessageCircle, CalendarDays, Scissors, X, RefreshCw, UserCheck, Filter,
+  MessageCircle, CalendarDays, Scissors, X, RefreshCw, UserCheck, Filter, Check, Wrench,
 } from 'lucide-react';
 import { useAppStore } from '@/store';
+import dayjs from 'dayjs';
 import type {
   Member, MemberLevel, BalanceRecord, BalanceRecordType, MemberProfile,
-  FollowUpRecord,
+  FollowUpRecord, LifecycleSegment, LifecycleGroup, MarketingCampaign, CampaignMemberStatus,
 } from '@/types';
 
 const LEVEL_COLORS: Record<MemberLevel, string> = {
@@ -38,7 +39,8 @@ export default function Members() {
   const [followUpForm] = Form.useForm();
   const [selectedRuleId, setSelectedRuleId] = useState<string | undefined>();
   const [customAmount, setCustomAmount] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<'list' | 'marketing'>('list');
+  const [activeTab, setActiveTab] = useState<'list' | 'lifecycle' | 'marketing' | 'campaigns'>('list');
+  const [selectedSegment, setSelectedSegment] = useState<LifecycleSegment | null>(null);
 
   // 营销筛选条件
   const [mLevels, setMLevels] = useState<MemberLevel[]>([]);
@@ -48,6 +50,11 @@ export default function Members() {
   const [mMaxDays, setMMaxDays] = useState<number | null>(null);
   const [mTags, setMTags] = useState<string[]>([]);
   const [markedFollowed, setMarkedFollowed] = useState<Set<string>>(new Set());
+
+  // 新建营销任务弹窗
+  const [saveCampaignModal, setSaveCampaignModal] = useState(false);
+  const [saveCampaignForm] = Form.useForm();
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null);
 
   const filteredMembers = useMemo(() => s.members.filter((m) =>
     (!searchText || m.name.includes(searchText) || m.phone.includes(searchText)) &&
@@ -242,6 +249,7 @@ export default function Members() {
   };
 
   const renderBalanceTab = (member: Member) => {
+    const [reconcileKey, setReconcileKey] = useState(0);
     const balanceRecords = s.getMemberBalanceRecords(member.id);
     const totalRecharge = balanceRecords.filter(r => r.type === 'recharge').reduce((s, r) => s + r.amount, 0);
     const totalBonus = balanceRecords.filter(r => r.type === 'bonus').reduce((s, r) => s + r.amount, 0);
@@ -287,6 +295,10 @@ export default function Members() {
             if (rec) {
               const barber = s.barbers.find(b => b.id === rec.barberId);
               detail = `（${barber?.name || '理发师'}服务）`;
+              if (rec.appointmentId) {
+                const appt = s.getAppointmentById(rec.appointmentId);
+                if (appt) detail += ` · 预约来源：${dayjs(appt.date).format('MM-DD')} ${appt.startTime}`;
+              }
             }
           } else if (r.type === 'bonus' && r.relatedId) {
             const rec = records.recharge.find(x => x.id === r.relatedId);
@@ -301,8 +313,15 @@ export default function Members() {
       },
     ];
 
+    const handleReconcile = () => {
+      const res = s.reconcileMemberBalance(member.id);
+      if (res.fixed) message.success(`已自动补平，差异 ¥${res.diff} 已生成调整流水`);
+      else message.info(res.balanced ? '账户余额一致，无需调整' : '补平操作失败');
+      setReconcileKey(k => k + 1);
+    };
+
     return (
-      <div>
+      <div key={reconcileKey}>
         <div className="mb-4 grid grid-cols-2 md:grid-cols-5 gap-3">
           <div className="p-3 rounded-lg bg-amber-50 border border-amber-100">
             <div className="text-xs text-walnut-500">累计充值</div>
@@ -323,21 +342,29 @@ export default function Members() {
             </div>
           </div>
           <div className={`p-3 rounded-lg border-2 ${isBalanced ? 'bg-green-50 border-green-300' : 'bg-red-50 border-red-300'}`}>
-            <div className="text-xs text-walnut-500">
-              对账 {isBalanced ? '✓ 一致' : '✗ 不一致'}
+            <div className="text-xs text-walnut-500 flex items-center gap-1">
+              {isBalanced ? <Check size={12} className="text-green-600" /> : <AlertTriangle size={12} className="text-red-600" />}
+              对账 {isBalanced ? '一致' : `不一致，差 ¥{(member.balance - calculatedBalance).toFixed(2)}`}
             </div>
             <div className="font-bold text-gold-700 text-lg">¥{member.balance}</div>
           </div>
         </div>
 
-        <div className="mb-3 flex justify-between items-center">
+        <div className="mb-3 flex justify-between items-center gap-2 flex-wrap">
           <span className="text-sm text-walnut-500">
             <ChevronRight size={14} className="inline -mt-0.5" />
             按时间顺序从早到晚展示，最新在下方
           </span>
-          <Button size="small" icon={<Wallet size={14} />} onClick={() => setAdjustModal({ open: true, member })}>
-            手动调整余额
-          </Button>
+          <Space size="small">
+            {!isBalanced && (
+              <Button type="primary" size="small" danger icon={<Wrench size={14} />} onClick={handleReconcile}>
+                一键对账补平
+              </Button>
+            )}
+            <Button size="small" icon={<Wallet size={14} />} onClick={() => setAdjustModal({ open: true, member })}>
+              手动调整余额
+            </Button>
+          </Space>
         </div>
 
         <Table
@@ -607,14 +634,35 @@ export default function Members() {
                   }}>
                     重置
                   </Button>
+                  <div className="flex-1" />
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<Megaphone size={14} />}
+                    onClick={() => { saveCampaignForm.resetFields(); setSaveCampaignModal(true); }}
+                    disabled={marketingMembers.length === 0}
+                    {...GOLD_BTN}
+                  >
+                    保存为营销任务（{marketingMembers.length}人）
+                  </Button>
                 </div>
               ),
+            },
+            {
+              key: 'lifecycle',
+              label: <span className="flex items-center gap-1.5"><Sparkles size={16} />客户生命周期</span>,
+              children: <div className="pt-2 text-sm text-walnut-500">点击下方卡片查看对应会员群体</div>,
+            },
+            {
+              key: 'campaigns',
+              label: <span className="flex items-center gap-1.5"><Megaphone size={16} />营销任务（{s.marketingCampaigns.length}）</span>,
+              children: <div className="pt-2 text-sm text-walnut-500">查看历史营销任务及转化进度</div>,
             },
           ]}
         />
       </Card>
 
-      {activeTab === 'list' ? (
+      {activeTab === 'list' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredMembers.map((m) => {
             const p = s.getMemberProfile(m.id);
@@ -633,6 +681,9 @@ export default function Members() {
                       <h3 className="font-bold text-lg text-walnut-800 m-0 truncate">{m.name}</h3>
                       <Tag color={LEVEL_COLORS[m.level]} className="!border-0 !font-medium">
                         {m.level}
+                      </Tag>
+                      <Tag color={s.getMemberLifecycle(m.id) === 'high_value' ? 'gold' : s.getMemberLifecycle(m.id) === 'active' ? 'orange' : s.getMemberLifecycle(m.id) === 'sleeping' ? 'purple' : 'green'} className="!text-xs !border-0">
+                        {s.getLifecycleGroups().find(g => g.key === s.getMemberLifecycle(m.id))?.name}
                       </Tag>
                     </div>
                     <p className="text-sm text-walnut-500 m-0 mt-1">{m.phone}</p>
@@ -681,9 +732,78 @@ export default function Members() {
             );
           })}
         </div>
-      ) : (
+      )}
+
+      {activeTab === 'lifecycle' && (() => {
+        const groups = s.getLifecycleGroups();
+        const stats = s.getLifecycleStats();
+        const showList = selectedSegment ? s.getLifecycleMembers(selectedSegment) : [];
+        const selGroup = groups.find(g => g.key === selectedSegment);
+        return (
+          <div className="space-y-5">
+            <Row gutter={[16, 16]}>
+              {groups.map(g => (
+                <Col xs={24} md={12} lg={6} key={g.key}>
+                  <Card
+                    hoverable
+                    onClick={() => setSelectedSegment(selectedSegment === g.key ? null : g.key)}
+                    className={`!rounded-2xl bg-gradient-to-br ${g.bg} border-2 transition-all ${selectedSegment === g.key ? 'ring-4 ring-gold-300' : ''}`}
+                    styles={{ body: { padding: 20 } }}
+                  >
+                    <div className="text-4xl mb-2">{g.icon}</div>
+                    <div className="flex items-baseline justify-between">
+                      <div className="text-lg font-bold text-walnut-800">{g.name}</div>
+                      <div className="text-2xl font-bold text-walnut-700">{stats[g.key]}</div>
+                    </div>
+                    <div className="text-xs text-walnut-500 mt-1">{g.description}</div>
+                    <Divider className="!my-3" />
+                    <div className="text-xs text-walnut-600">
+                      <div className="font-medium mb-1.5 flex items-center gap-1"><Sparkles size={12} />推荐动作：</div>
+                      <Space size={[4, 4]} wrap>
+                        {g.suggestions.map(sg => <Tag key={sg} color="gold" className="!text-xs !py-0 !border-0">{sg}</Tag>)}
+                      </Space>
+                    </div>
+                  </Card>
+                </Col>
+              ))}
+            </Row>
+
+            {selectedSegment && selGroup && (
+              <Card
+                title={<span className="font-semibold">{selGroup.icon} {selGroup.name}（共 {showList.length} 人）</span>}
+                className="!rounded-2xl !shadow-sm"
+                extra={<Button size="small" onClick={() => setSelectedSegment(null)}>返回</Button>}
+              >
+                {showList.length === 0 ? (
+                  <Empty description="暂无此类会员" />
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {showList.map(m => {
+                      const p = s.getMemberProfile(m.id);
+                      return (
+                        <Card key={m.id} size="small" className="!rounded-xl" styles={{ body: { padding: 14 } }}>
+                          <div className="flex items-center gap-3">
+                            <Avatar size={40} style={AVATAR_BG}>{m.avatar}</Avatar>
+                            <div className="flex-1">
+                              <div className="font-semibold text-walnut-800">{m.name} <Tag color={LEVEL_COLORS[m.level]} className="!text-xs">{m.level}</Tag></div>
+                              <div className="text-xs text-walnut-500">{m.phone} · {p.daysSinceLastVisit > 1000 ? '未到店' : `${p.daysSinceLastVisit}天前到店`} · ¥{p.totalSpend}</div>
+                            </div>
+                            <Button size="small" icon={<Eye size={12} />} onClick={() => setDetailDrawer({ open: true, member: m })}>详情</Button>
+                          </div>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )}
+              </Card>
+            )}
+          </div>
+        );
+      })()}
+
+      {activeTab === 'marketing' && (
         <Card className="!rounded-2xl !shadow-sm" styles={{ body: { padding: 16 } }}>
-          <div className="mb-3 flex justify-between items-center px-2">
+          <div className="mb-3 flex justify-between items-center px-2 flex-wrap gap-2">
             <span className="text-walnut-600">
               根据筛选条件找到 <span className="font-bold text-gold-600">{marketingMembers.length}</span> 位会员
             </span>
@@ -705,6 +825,161 @@ export default function Members() {
           />
         </Card>
       )}
+
+      {activeTab === 'campaigns' && (() => {
+        const columns = [
+          { title: '任务名称', dataIndex: 'name', width: 200 },
+          { title: '说明', dataIndex: 'description', ellipsis: true },
+          { title: '创建时间', dataIndex: 'createdAt', width: 150 },
+          {
+            title: '名单', width: 70, align: 'center' as const,
+            render: (_: any, r: MarketingCampaign) => r.members.length,
+          },
+          {
+            title: '待联系', width: 80, align: 'center' as const,
+            render: (_: any, r: MarketingCampaign) => <Tag color="orange">{r.members.filter(m => m.status === 'pending').length}</Tag>,
+          },
+          {
+            title: '已联系', width: 80, align: 'center' as const,
+            render: (_: any, r: MarketingCampaign) => <Tag color="blue">{r.members.filter(m => m.status === 'contacted').length}</Tag>,
+          },
+          {
+            title: '已到店/消费', width: 100, align: 'center' as const,
+            render: (_: any, r: MarketingCampaign) => <Tag color="green">{r.members.filter(m => m.status === 'visited' || m.status === 'consumed').length}</Tag>,
+          },
+          {
+            title: '转化率', width: 90, align: 'center' as const,
+            render: (_: any, r: MarketingCampaign) => {
+              const contacted = r.members.filter(m => m.status !== 'pending').length;
+              const converted = r.members.filter(m => m.status === 'visited' || m.status === 'consumed').length;
+              if (contacted === 0) return <span className="text-walnut-400">-</span>;
+              return <span className="font-bold text-emerald-600">{(converted / contacted * 100).toFixed(0)}%</span>;
+            },
+          },
+          {
+            title: '操作', width: 180,
+            render: (_: any, r: MarketingCampaign) => (
+              <Space size="small">
+                <Button size="small" onClick={() => setSelectedCampaignId(selectedCampaignId === r.id ? null : r.id)}>
+                  {selectedCampaignId === r.id ? '收起' : '名单'}
+                </Button>
+                <Button size="small" danger onClick={() => { if (confirm('确认删除该任务？')) s.deleteMarketingCampaign(r.id); }}>删除</Button>
+              </Space>
+            ),
+          },
+        ];
+        const selectedCampaign = s.marketingCampaigns.find(c => c.id === selectedCampaignId);
+        const statusOptions: { label: string; value: CampaignMemberStatus; color: string }[] = [
+          { label: '待联系', value: 'pending', color: 'orange' },
+          { label: '已联系', value: 'contacted', color: 'blue' },
+          { label: '已到店', value: 'visited', color: 'cyan' },
+          { label: '已消费', value: 'consumed', color: 'green' },
+          { label: '已流失', value: 'lost', color: 'red' },
+        ];
+        return (
+          <div className="space-y-4">
+            <Card className="!rounded-2xl !shadow-sm" styles={{ body: { padding: 12 } }}>
+              {s.marketingCampaigns.length === 0 ? (
+                <Empty description="暂无营销任务，可从「营销跟进」Tab筛选后保存任务" />
+              ) : (
+                <Table
+                  size="small"
+                  dataSource={s.marketingCampaigns}
+                  columns={columns}
+                  rowKey="id"
+                  pagination={false}
+                />
+              )}
+            </Card>
+            {selectedCampaign && (
+              <Card title={<span className="font-semibold">{selectedCampaign.name} - 跟进名单</span>} className="!rounded-2xl !shadow-sm">
+                <Table
+                  size="small"
+                  dataSource={selectedCampaign.members}
+                  rowKey="memberId"
+                  pagination={false}
+                  columns={[
+                    {
+                      title: '会员', width: 180,
+                      render: (_: any, r: any) => {
+                        const m = s.members.find(x => x.id === r.memberId);
+                        if (!m) return '-';
+                        return <span>{m.avatar} {m.name} <span className="text-walnut-400 text-xs">{m.phone}</span></span>;
+                      },
+                    },
+                    {
+                      title: '状态', width: 120,
+                      render: (_: any, r: any) => {
+                        const opt = statusOptions.find(o => o.value === r.status);
+                        return opt ? <Tag color={opt.color}>{opt.label}</Tag> : '-';
+                      },
+                    },
+                    { title: '联系时间', dataIndex: 'contactedAt', width: 150, render: (v: string) => v || '-' },
+                    { title: '备注', dataIndex: 'note', render: (v: string) => v || '-' },
+                    {
+                      title: '更新状态', width: 260,
+                      render: (_: any, r: any) => (
+                        <Space size="small" wrap>
+                          {statusOptions.map(opt => (
+                            <Button
+                              key={opt.value}
+                              size="small"
+                              type={r.status === opt.value ? 'primary' : 'default'}
+                              onClick={() => s.updateCampaignMemberStatus(selectedCampaign.id, r.memberId, opt.value)}
+                            >
+                              {opt.label}
+                            </Button>
+                          ))}
+                        </Space>
+                      ),
+                    },
+                  ]}
+                />
+              </Card>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* 保存营销任务弹窗 */}
+      <Modal
+        title={<span className="font-bold">保存为营销任务</span>}
+        open={saveCampaignModal}
+        onCancel={() => setSaveCampaignModal(false)}
+        onOk={async () => {
+          try {
+            const v = await saveCampaignForm.validateFields();
+            s.createMarketingCampaign({
+              name: v.name,
+              description: v.description,
+              filters: {
+                levels: mLevels.length ? mLevels : undefined,
+                minBalance: mMinBalance ?? undefined,
+                maxBalance: mMaxBalance ?? undefined,
+                minDaysNotVisited: mMinDays ?? undefined,
+                maxDaysNotVisited: mMaxDays ?? undefined,
+              },
+              memberIds: marketingMembers.map(m => m.id),
+            });
+            message.success(`营销任务「${v.name}」已创建，共 ${marketingMembers.length} 人`);
+            setSaveCampaignModal(false);
+            setActiveTab('campaigns');
+          } catch {}
+        }}
+        okButtonProps={GOLD_BTN}
+      >
+        <Form form={saveCampaignForm} layout="vertical">
+          <Form.Item name="name" label="任务名称" rules={[{ required: true, message: '请输入任务名称' }]}>
+            <Input placeholder="例如：618烫染活动推广、沉睡客唤醒..." />
+          </Form.Item>
+          <Form.Item name="description" label="任务说明">
+            <Input.TextArea rows={2} placeholder="简单描述本次营销的目的、方式..." />
+          </Form.Item>
+          <div className="p-3 rounded-lg bg-walnut-50 text-sm text-walnut-600">
+            将保存 <span className="font-bold text-gold-600">{marketingMembers.length}</span> 位会员为待联系名单
+          </div>
+        </Form>
+      </Modal>
 
       {/* 新建会员 */}
       <Modal
@@ -1030,6 +1305,19 @@ export default function Members() {
                         columns={[
                           { title: '时间', dataIndex: 'createdAt', width: 160 },
                           { title: '项目', dataIndex: 'note' },
+                          {
+                            title: '预约来源', width: 140,
+                            render: (_: any, r: any) => {
+                              if (!r.appointmentId) return <span className="text-walnut-400">直接消费</span>;
+                              const a = s.getAppointmentById(r.appointmentId);
+                              if (!a) return '-';
+                              return (
+                                <Tag color="purple" className="!text-xs">
+                                  📅 {dayjs(a.date).format('MM-DD')} {a.startTime}
+                                </Tag>
+                              );
+                            },
+                          },
                           { title: '理发师', dataIndex: 'barberId', render: (v) => s.barbers.find((b) => b.id === v)?.name || '-' },
                           { title: '金额', dataIndex: 'amount', render: (v) => <span className="text-walnut-700">¥{v}</span> },
                           { title: '积分', dataIndex: 'pointsEarned', render: (v) => <span className="text-purple-600">+{v}</span> },

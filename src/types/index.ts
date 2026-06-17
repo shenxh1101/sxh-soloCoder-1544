@@ -60,6 +60,7 @@ export interface ConsumptionRecord {
   pointsEarned: number;
   createdAt: string;
   note?: string;
+  appointmentId?: string;
 }
 
 export type PointsType = 'earn' | 'exchange' | 'expire';
@@ -146,6 +147,63 @@ export interface MemberProfile {
   spendLevel: '低消费' | '中消费' | '高消费';
   freqLevel: '偶尔' | '一般' | '常客' | '忠实';
   suggestedTags: string[];
+}
+
+export type LifecycleSegment = 'new' | 'active' | 'sleeping' | 'high_value';
+
+export interface LifecycleGroup {
+  key: LifecycleSegment;
+  name: string;
+  icon: string;
+  color: string;
+  bg: string;
+  description: string;
+  suggestions: string[];
+}
+
+export type CampaignMemberStatus = 'pending' | 'contacted' | 'visited' | 'consumed' | 'lost';
+
+export interface CampaignMember {
+  memberId: string;
+  status: CampaignMemberStatus;
+  contactedAt?: string;
+  note?: string;
+}
+
+export interface MarketingCampaign {
+  id: string;
+  name: string;
+  description?: string;
+  filters: {
+    levels?: MemberLevel[];
+    minBalance?: number;
+    maxBalance?: number;
+    minDaysNotVisited?: number;
+    maxDaysNotVisited?: number;
+    segments?: LifecycleSegment[];
+  };
+  members: CampaignMember[];
+  createdAt: string;
+}
+
+export interface ReviewStats {
+  period: string;
+  appointmentTotal: number;
+  appointmentCompleted: number;
+  appointmentNoShow: number;
+  appointmentCancelled: number;
+  completionRate: number;
+  noShowRate: number;
+  newMembers: number;
+  activeMembers: number;
+  totalRevenue: number;
+  memberRevenue: number;
+  memberRevenueRatio: number;
+  avgOrderValue: number;
+  campaignCount: number;
+  campaignContacted: number;
+  campaignConverted: number;
+  campaignConversionRate: number;
 }
 
 export interface StatisticsData {
