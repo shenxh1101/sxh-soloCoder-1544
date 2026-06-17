@@ -31,7 +31,7 @@ export default function Points() {
     return { monthCnt, totalCnt: exchangeRecords.length, saved };
   }, [exchangeRecords]);
 
-  const openExchange = (item: ReturnType<typeof EXCHANGE_ITEM>) => {
+  const openExchange = (item: ExchangeItem) => {
     setSelItem(item); setSelMbr(undefined); setModalOpen(true);
   };
 

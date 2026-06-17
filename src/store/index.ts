@@ -30,6 +30,13 @@ import {
 
 const genId = () => Math.random().toString(36).substring(2, 10);
 
+const calcExpireDate = (rule: PointsRule): string => {
+  if (rule.expireRule === 'yearly') {
+    return dayjs().endOf('year').format('YYYY-MM-DD');
+  }
+  return dayjs().add(rule.expireMonths, 'month').format('YYYY-MM-DD');
+};
+
 const initMembers = generateInitialMembers();
 const initAppointments = generateInitialAppointments(initMembers, initialBarbers);
 const initRechargeRecords = generateInitialRechargeRecords(initMembers);
@@ -153,7 +160,7 @@ export const useAppStore = create<AppState>()(
 
       rechargeMember: (memberId, ruleId, amount, bonus) => {
         const now = dayjs().format('YYYY-MM-DD HH:mm');
-        const expireDate = dayjs().add(get().pointsRule.expireMonths, 'month').format('YYYY-MM-DD');
+        const expireDate = calcExpireDate(get().pointsRule);
         set((state) => {
           const member = state.members.find((m) => m.id === memberId);
           if (!member) return state;
@@ -196,9 +203,10 @@ export const useAppStore = create<AppState>()(
 
       consumeMember: (memberId, barberId, packageId, amount, note) => {
         const now = dayjs().format('YYYY-MM-DD HH:mm');
-        const pointsPerYuan = get().pointsRule.pointsPerYuan;
+        const rule = get().pointsRule;
+        const pointsPerYuan = rule.pointsPerYuan;
         const pointsEarned = Math.floor(amount * pointsPerYuan);
-        const expireDate = dayjs().add(get().pointsRule.expireMonths, 'month').format('YYYY-MM-DD');
+        const expireDate = calcExpireDate(rule);
 
         set((state) => {
           const member = state.members.find((m) => m.id === memberId);

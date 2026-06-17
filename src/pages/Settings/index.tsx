@@ -77,7 +77,8 @@ const BarberCard = ({ barber }: { barber: Barber }) => {
           <Col span={12}>
             <Form.Item label="颜色标签" name="colorTag" rules={[{ required: true }]}>
               <ColorPicker format="hex" presets={[{label:'金色系',colors:GOLD_COLORS}]}
-                trigger={<div className="h-10 rounded-lg border border-walnut-200 flex items-center gap-2 px-3 cursor-pointer" />} />
+                showText={(color) => <span className="text-walnut-600">{color.toHexString()}</span>}
+                className="!w-full !h-10 !rounded-lg" />
             </Form.Item>
           </Col>
           <Col span={12}>
