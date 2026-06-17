@@ -21,6 +21,7 @@ export interface Member {
   level: MemberLevel;
   noShowCount: number;
   createdAt: string;
+  tags?: string[];
 }
 
 export type AppointmentStatus = 'confirmed' | 'completed' | 'no_show' | 'cancelled';
@@ -37,6 +38,8 @@ export interface Appointment {
   customerName: string;
   customerPhone: string;
   note?: string;
+  consumptionId?: string;
+  followUpNote?: string;
 }
 
 export interface RechargeRecord {
@@ -121,6 +124,28 @@ export interface BalanceRecord {
   description: string;
   relatedId?: string;
   createdAt: string;
+}
+
+export interface FollowUpRecord {
+  id: string;
+  memberId: string;
+  type: 'marketing' | 'care' | 'callback';
+  content: string;
+  contactedAt: string;
+  operator?: string;
+}
+
+export interface MemberProfile {
+  memberId: string;
+  frequentServices: { name: string; count: number }[];
+  lastVisitDate: string;
+  daysSinceLastVisit: number;
+  visitCount: number;
+  avgSpend: number;
+  totalSpend: number;
+  spendLevel: '低消费' | '中消费' | '高消费';
+  freqLevel: '偶尔' | '一般' | '常客' | '忠实';
+  suggestedTags: string[];
 }
 
 export interface StatisticsData {

@@ -11,6 +11,7 @@ import type {
   RechargeRule,
   PointsRule,
   BalanceRecord,
+  FollowUpRecord,
 } from '@/types';
 
 const genId = () => Math.random().toString(36).substring(2, 10);
@@ -293,4 +294,26 @@ export const generateInitialBalanceRecords = (
     });
   });
   return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+};
+
+export const generateInitialFollowUpRecords = (members: Member[]): FollowUpRecord[] => {
+  const records: FollowUpRecord[] = [];
+  const contents = [
+    { type: 'care' as const, content: '生日关怀短信已发送，客户回复感谢' },
+    { type: 'marketing' as const, content: '烫染活动推广，客户表示月底有空来' },
+    { type: 'callback' as const, content: '烫染后回访，客户反馈效果满意' },
+    { type: 'marketing' as const, content: '积分即将过期提醒，已通知客户' },
+    { type: 'care' as const, content: '换季护理推荐，客户预约本周到店' },
+  ];
+  [members[0], members[2], members[4], members[6]].forEach((m, idx) => {
+    records.push({
+      id: genId(),
+      memberId: m.id,
+      type: contents[idx % contents.length].type,
+      content: contents[idx % contents.length].content,
+      contactedAt: dayjs().subtract(idx * 3 + 1, 'day').format('YYYY-MM-DD HH:mm'),
+      operator: '店员',
+    });
+  });
+  return records;
 };

@@ -1,11 +1,18 @@
 import { useState, useMemo } from 'react';
 import {
   Input, Select, Button, Card, Tag, Modal, Drawer, Table, Form, InputNumber,
-  Avatar, Space, message, Divider, Tabs, Tooltip
+  Avatar, Space, message, Divider, Tabs, Tooltip, Row, Col, Empty, Badge, App as AntApp, Alert,
 } from 'antd';
-import { Search, Plus, Wallet, ShoppingBag, Eye, UserPlus, AlertTriangle, Coins, Receipt, ChevronRight } from 'lucide-react';
+import {
+  Search, Plus, Wallet, ShoppingBag, Eye, UserPlus, AlertTriangle, Coins, Receipt, ChevronRight,
+  Sparkles, PhoneCall, Heart, Megaphone, Target, TrendingUp, Clock, Star, Tag as TagIcon,
+  MessageCircle, CalendarDays, Scissors, X, RefreshCw, UserCheck, Filter,
+} from 'lucide-react';
 import { useAppStore } from '@/store';
-import type { Member, MemberLevel, BalanceRecord, BalanceRecordType } from '@/types';
+import type {
+  Member, MemberLevel, BalanceRecord, BalanceRecordType, MemberProfile,
+  FollowUpRecord,
+} from '@/types';
 
 const LEVEL_COLORS: Record<MemberLevel, string> = {
   '普通会员': 'default', '银卡会员': 'blue', '金卡会员': 'gold', '钻石会员': 'purple',
@@ -15,22 +22,46 @@ const GOLD_BTN = { style: { background: 'linear-gradient(135deg, #D4AF37, #B8941
 
 export default function Members() {
   const s = useAppStore();
+  const { message } = AntApp.useApp();
   const [searchText, setSearchText] = useState('');
   const [levelFilter, setLevelFilter] = useState<MemberLevel | undefined>();
   const [rechargeModal, setRechargeModal] = useState<{ open: boolean; member?: Member }>({ open: false });
   const [consumeModal, setConsumeModal] = useState<{ open: boolean; member?: Member }>({ open: false });
   const [detailDrawer, setDetailDrawer] = useState<{ open: boolean; member?: Member }>({ open: false });
   const [createModal, setCreateModal] = useState(false);
+  const [adjustModal, setAdjustModal] = useState<{ open: boolean; member?: Member }>({ open: false });
   const [rechargeForm] = Form.useForm();
   const [consumeForm] = Form.useForm();
   const [createForm] = Form.useForm();
+  const [adjustForm] = Form.useForm();
+  const [followUpModal, setFollowUpModal] = useState<{ open: boolean; member?: Member }>({ open: false });
+  const [followUpForm] = Form.useForm();
   const [selectedRuleId, setSelectedRuleId] = useState<string | undefined>();
   const [customAmount, setCustomAmount] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<'list' | 'marketing'>('list');
+
+  // 营销筛选条件
+  const [mLevels, setMLevels] = useState<MemberLevel[]>([]);
+  const [mMinBalance, setMMinBalance] = useState<number | null>(null);
+  const [mMaxBalance, setMMaxBalance] = useState<number | null>(null);
+  const [mMinDays, setMMinDays] = useState<number | null>(null);
+  const [mMaxDays, setMMaxDays] = useState<number | null>(null);
+  const [mTags, setMTags] = useState<string[]>([]);
+  const [markedFollowed, setMarkedFollowed] = useState<Set<string>>(new Set());
 
   const filteredMembers = useMemo(() => s.members.filter((m) =>
     (!searchText || m.name.includes(searchText) || m.phone.includes(searchText)) &&
     (!levelFilter || m.level === levelFilter)
   ), [s.members, searchText, levelFilter]);
+
+  const marketingMembers = useMemo(() => s.filterMarketingMembers({
+    levels: mLevels.length ? mLevels : undefined,
+    minBalance: mMinBalance ?? undefined,
+    maxBalance: mMaxBalance ?? undefined,
+    minDaysNotVisited: mMinDays ?? undefined,
+    maxDaysNotVisited: mMaxDays ?? undefined,
+    tags: mTags.length ? mTags : undefined,
+  }), [s, mLevels, mMinBalance, mMaxBalance, mMinDays, mMaxDays, mTags]);
 
   const calcRecharge = () => {
     const rule = s.rechargeRules.find((r) => r.id === selectedRuleId);
@@ -90,6 +121,33 @@ export default function Members() {
     } catch {}
   };
 
+  const confirmAdjust = async () => {
+    try {
+      const values = await adjustForm.validateFields();
+      const { member } = adjustModal; if (!member) return;
+      const ok = s.adjustMemberBalance(member.id, values.amount, values.note || '手动调整');
+      if (ok) {
+        message.success('余额调整成功');
+        setAdjustModal({ open: false });
+        adjustForm.resetFields();
+      } else {
+        message.error('余额不足，调整失败');
+      }
+    } catch {}
+  };
+
+  const confirmFollowUp = async () => {
+    try {
+      const values = await followUpForm.validateFields();
+      const { member } = followUpModal; if (!member) return;
+      s.addFollowUpRecord({ memberId: member.id, type: values.type, content: values.content, operator: '店员' });
+      setMarkedFollowed(prev => new Set(prev).add(member.id));
+      message.success('已记录跟进');
+      setFollowUpModal({ open: false });
+      followUpForm.resetFields();
+    } catch {}
+  };
+
   const getMemberRecords = (id: string) => ({
     recharge: s.rechargeRecords.filter((r) => r.memberId === id),
     consume: s.consumptionRecords.filter((r) => r.memberId === id),
@@ -100,92 +158,553 @@ export default function Members() {
   const CARD_STYLE = { body: { padding: 20 } };
   const TABLE_PG = { pageSize: 5 };
 
-  return (
-    <div className="space-y-6">
-      <Card className="!rounded-2xl !shadow-sm" styles={CARD_STYLE}>
-        <div className="flex flex-wrap items-center gap-4">
-          <Input
-            prefix={<Search size={18} className="text-walnut-400" />}
-            placeholder="搜索姓名或电话..."
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            className="!w-72"
-            allowClear
-          />
-          <Select
-            placeholder="等级筛选" allowClear
-            value={levelFilter} onChange={setLevelFilter}
-            className="!w-44"
-            options={['普通会员', '银卡会员', '金卡会员', '钻石会员'].map((v) => ({ value: v, label: v }))}
-          />
-          <div className="flex-1" />
-          <Button
-            type="primary" icon={<Plus size={18} />}
-            onClick={() => setCreateModal(true)}
-            className="!h-10 !px-5 !font-semibold"
-            {...GOLD_BTN}
-          >
-            新建会员
+  const renderProfile = (profile: MemberProfile, member: Member) => {
+    const allTags = Array.from(new Set([...(member.tags || []), ...profile.suggestedTags]));
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="p-3 rounded-xl bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-100">
+            <div className="text-xs text-walnut-500 flex items-center gap-1"><CalendarDays size={12} />最近到店</div>
+            <div className="text-lg font-bold text-emerald-700 mt-1">
+              {profile.daysSinceLastVisit > 1000 ? '暂无' : `${profile.daysSinceLastVisit}天前`}
+            </div>
+            <div className="text-xs text-walnut-400">{profile.lastVisitDate}</div>
+          </div>
+          <div className="p-3 rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100">
+            <div className="text-xs text-walnut-500 flex items-center gap-1"><TrendingUp size={12} />消费频次</div>
+            <div className="text-lg font-bold text-blue-700 mt-1">{profile.visitCount} 次</div>
+            <div className="text-xs text-walnut-400">{profile.freqLevel}</div>
+          </div>
+          <div className="p-3 rounded-xl bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-100">
+            <div className="text-xs text-walnut-500 flex items-center gap-1"><Star size={12} />客单价</div>
+            <div className="text-lg font-bold text-amber-700 mt-1">¥{profile.avgSpend}</div>
+            <div className="text-xs text-walnut-400">{profile.spendLevel}</div>
+          </div>
+          <div className="p-3 rounded-xl bg-gradient-to-br from-rose-50 to-pink-50 border border-rose-100">
+            <div className="text-xs text-walnut-500 flex items-center gap-1"><Coins size={12} />累计消费</div>
+            <div className="text-lg font-bold text-rose-700 mt-1">¥{profile.totalSpend}</div>
+            <div className="text-xs text-walnut-400">历史总额</div>
+          </div>
+        </div>
+
+        {profile.frequentServices.length > 0 && (
+          <div className="p-4 rounded-xl bg-walnut-50 border border-walnut-100">
+            <div className="text-sm font-semibold text-walnut-700 mb-2 flex items-center gap-1">
+              <Scissors size={14} className="text-gold-500" />常做项目（推荐依据）
+            </div>
+            <Space size={[8, 8]} wrap>
+              {profile.frequentServices.map(svc => (
+                <Tag key={svc.name} color="gold" className="!border-0 !px-3 !py-1 !text-sm !font-medium">
+                  {svc.name} × {svc.count}
+                </Tag>
+              ))}
+            </Space>
+          </div>
+        )}
+
+        <div className="p-4 rounded-xl border border-dashed border-gold-300 bg-gradient-to-r from-amber-50/60 to-gold-50/60">
+          <div className="text-sm font-semibold text-walnut-700 mb-3 flex items-center justify-between">
+            <span className="flex items-center gap-1"><Sparkles size={14} className="text-gold-500" />经营标签</span>
+            <span className="text-xs text-walnut-400">系统自动打标 + 手动维护</span>
+          </div>
+          {allTags.length === 0 ? (
+            <Empty description="暂无标签" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          ) : (
+            <Space size={[8, 8]} wrap>
+              {allTags.map(tag => {
+                const isManual = (member.tags || []).includes(tag) && !profile.suggestedTags.includes(tag);
+                const isSuggested = profile.suggestedTags.includes(tag) && !(member.tags || []).includes(tag);
+                return (
+                  <Badge key={tag} count={isSuggested ? 'AI' : 0} color="#D4AF37" offset={[-4, 4]}>
+                    <Tag
+                      color={isManual ? 'purple' : 'gold'}
+                      closable={isManual}
+                      onClose={(e) => { e.preventDefault(); s.removeMemberTag(member.id, tag); }}
+                      className="!border-0 !px-3 !py-1 !text-sm !font-medium"
+                    >
+                      {tag}
+                    </Tag>
+                  </Badge>
+                );
+              })}
+            </Space>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const TYPE_META: Record<BalanceRecordType, { label: string; color: string; bg: string; icon: string }> = {
+    recharge: { label: '充值', color: 'gold', bg: 'bg-amber-50', icon: '💰' },
+    consume: { label: '消费', color: 'red', bg: 'bg-rose-50', icon: '🧾' },
+    bonus: { label: '赠送', color: 'green', bg: 'bg-emerald-50', icon: '🎁' },
+    adjust: { label: '调整', color: 'blue', bg: 'bg-blue-50', icon: '✏️' },
+  };
+
+  const renderBalanceTab = (member: Member) => {
+    const balanceRecords = s.getMemberBalanceRecords(member.id);
+    const totalRecharge = balanceRecords.filter(r => r.type === 'recharge').reduce((s, r) => s + r.amount, 0);
+    const totalBonus = balanceRecords.filter(r => r.type === 'bonus').reduce((s, r) => s + r.amount, 0);
+    const totalConsume = -balanceRecords.filter(r => r.type === 'consume').reduce((s, r) => s + r.amount, 0);
+    const totalAdjust = balanceRecords.filter(r => r.type === 'adjust').reduce((s, r) => s + r.amount, 0);
+    const calculatedBalance = totalRecharge + totalBonus - totalConsume + totalAdjust;
+    const isBalanced = Math.abs(calculatedBalance - member.balance) < 0.01;
+    const records = getMemberRecords(member.id);
+
+    const balanceColumns = [
+      {
+        title: '时间', dataIndex: 'createdAt', width: 160,
+        render: (v: string) => <span className="text-walnut-600 text-sm">{v}</span>,
+      },
+      {
+        title: '类型', dataIndex: 'type', width: 90,
+        render: (v: BalanceRecordType) => {
+          const meta = TYPE_META[v];
+          return <Tag color={meta.color} className="!border-0 !font-medium">{meta.icon} {meta.label}</Tag>;
+        },
+      },
+      {
+        title: '变动', dataIndex: 'amount', width: 100, align: 'right' as const,
+        render: (v: number) => (
+          <span className={`font-bold ${v >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+            {v >= 0 ? '+' : ''}¥{v}
+          </span>
+        ),
+      },
+      {
+        title: '余额', dataIndex: 'balanceAfter', width: 100, align: 'right' as const,
+        render: (v: number) => <span className="font-semibold text-gold-600">¥{v}</span>,
+      },
+      {
+        title: '说明', dataIndex: 'description',
+        render: (v: string, r: BalanceRecord) => {
+          let detail = '';
+          if (r.type === 'recharge' && r.relatedId) {
+            const rec = records.recharge.find(x => x.id === r.relatedId);
+            if (rec) detail = `（充¥${rec.rechargeAmount}送¥${rec.bonusAmount}）`;
+          } else if (r.type === 'consume' && r.relatedId) {
+            const rec = records.consume.find(x => x.id === r.relatedId);
+            if (rec) {
+              const barber = s.barbers.find(b => b.id === rec.barberId);
+              detail = `（${barber?.name || '理发师'}服务）`;
+            }
+          } else if (r.type === 'bonus' && r.relatedId) {
+            const rec = records.recharge.find(x => x.id === r.relatedId);
+            if (rec) detail = `（对应充值¥${rec.rechargeAmount}）`;
+          }
+          return (
+            <Tooltip title={v + detail}>
+              <span className="text-walnut-700">{v}<span className="text-walnut-400 text-xs ml-1">{detail}</span></span>
+            </Tooltip>
+          );
+        },
+      },
+    ];
+
+    return (
+      <div>
+        <div className="mb-4 grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="p-3 rounded-lg bg-amber-50 border border-amber-100">
+            <div className="text-xs text-walnut-500">累计充值</div>
+            <div className="font-bold text-amber-700 text-lg">¥{totalRecharge}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-100">
+            <div className="text-xs text-walnut-500">累计赠送</div>
+            <div className="font-bold text-emerald-700 text-lg">¥{totalBonus}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-rose-50 border border-rose-100">
+            <div className="text-xs text-walnut-500">累计消费</div>
+            <div className="font-bold text-rose-700 text-lg">¥{totalConsume}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-blue-50 border border-blue-100">
+            <div className="text-xs text-walnut-500">手动调整</div>
+            <div className={`font-bold text-lg ${totalAdjust >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>
+              {totalAdjust >= 0 ? '+' : ''}¥{totalAdjust}
+            </div>
+          </div>
+          <div className={`p-3 rounded-lg border-2 ${isBalanced ? 'bg-green-50 border-green-300' : 'bg-red-50 border-red-300'}`}>
+            <div className="text-xs text-walnut-500">
+              对账 {isBalanced ? '✓ 一致' : '✗ 不一致'}
+            </div>
+            <div className="font-bold text-gold-700 text-lg">¥{member.balance}</div>
+          </div>
+        </div>
+
+        <div className="mb-3 flex justify-between items-center">
+          <span className="text-sm text-walnut-500">
+            <ChevronRight size={14} className="inline -mt-0.5" />
+            按时间顺序从早到晚展示，最新在下方
+          </span>
+          <Button size="small" icon={<Wallet size={14} />} onClick={() => setAdjustModal({ open: true, member })}>
+            手动调整余额
           </Button>
         </div>
+
+        <Table
+          size="small"
+          dataSource={balanceRecords}
+          rowKey="id"
+          pagination={{ pageSize: 8, showSizeChanger: true }}
+          columns={balanceColumns}
+          rowClassName={(r) => TYPE_META[r.type].bg}
+          expandable={{
+            expandedRowRender: (r: BalanceRecord) => {
+              let extra: { label: string; value: string }[] = [];
+              if (r.relatedId) {
+                if (r.type === 'recharge' || r.type === 'bonus') {
+                  const rec = records.recharge.find(x => x.id === r.relatedId);
+                  if (rec) {
+                    extra = [
+                      { label: '充值单号', value: rec.id },
+                      { label: '充值本金', value: `¥${rec.rechargeAmount}` },
+                      { label: '赠送金额', value: `¥${rec.bonusAmount}` },
+                      { label: '到账总额', value: `¥${rec.rechargeAmount + rec.bonusAmount}` },
+                      { label: '记录时间', value: rec.createdAt },
+                    ];
+                  }
+                } else if (r.type === 'consume') {
+                  const rec = records.consume.find(x => x.id === r.relatedId);
+                  if (rec) {
+                    const barber = s.barbers.find(b => b.id === rec.barberId);
+                    const pkg = s.servicePackages.find(p => p.id === rec.packageId);
+                    extra = [
+                      { label: '消费单号', value: rec.id },
+                      { label: '服务项目', value: rec.note || pkg?.name || '-' },
+                      { label: '理发师', value: barber ? `${barber.avatar} ${barber.name}` : '-' },
+                      { label: '消费金额', value: `¥${rec.amount}` },
+                      { label: '获得积分', value: `+${rec.pointsEarned}` },
+                      { label: '记录时间', value: rec.createdAt },
+                    ];
+                  }
+                }
+              } else if (r.type === 'adjust') {
+                extra = [
+                  { label: '调整类型', value: r.amount >= 0 ? '余额补登' : '余额扣款' },
+                  { label: '备注', value: r.description },
+                  { label: '记录时间', value: r.createdAt },
+                ];
+              }
+              if (extra.length === 0) return <p className="text-walnut-400 text-sm">无附加信息</p>;
+              return (
+                <div className="grid grid-cols-2 gap-2 py-1">
+                  {extra.map(e => (
+                    <div key={e.label} className="flex gap-2 text-sm">
+                      <span className="text-walnut-400 min-w-[80px]">{e.label}：</span>
+                      <span className="text-walnut-700 font-medium">{e.value}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            },
+            rowExpandable: (r: BalanceRecord) => !!r.relatedId || r.type === 'adjust',
+          }}
+        />
+      </div>
+    );
+  };
+
+  const renderFollowUpTab = (member: Member) => {
+    const records = s.getFollowUpRecords(member.id);
+    const typeMeta: Record<FollowUpRecord['type'], { label: string; color: string; icon: any }> = {
+      marketing: { label: '营销推广', color: 'orange', icon: Megaphone },
+      care: { label: '客户关怀', color: 'pink', icon: Heart },
+      callback: { label: '服务回访', color: 'blue', icon: PhoneCall },
+    };
+    return (
+      <div>
+        <div className="mb-4 flex justify-between items-center">
+          <span className="text-walnut-500 text-sm">共 {records.length} 条跟进记录</span>
+          <Button
+            type="primary"
+            size="small"
+            icon={<MessageCircle size={14} />}
+            onClick={() => { followUpForm.resetFields(); setFollowUpModal({ open: true, member }); }}
+            {...GOLD_BTN}
+          >
+            新增跟进
+          </Button>
+        </div>
+        {records.length === 0 ? (
+          <Empty description="暂无跟进记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        ) : (
+          <div className="space-y-3">
+            {records.map(r => {
+              const meta = typeMeta[r.type];
+              const Icon = meta.icon;
+              return (
+                <div key={r.id} className="p-4 rounded-xl border border-walnut-100 bg-walnut-50/50">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <Tag color={meta.color} className="!border-0 !font-medium">
+                        <Icon size={12} className="inline -mt-0.5 mr-1" />{meta.label}
+                      </Tag>
+                      <span className="text-xs text-walnut-400">{r.contactedAt}</span>
+                    </div>
+                    {r.operator && <span className="text-xs text-walnut-400">跟进人：{r.operator}</span>}
+                  </div>
+                  <p className="text-walnut-700 text-sm m-0">{r.content}</p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const marketingColumns = [
+    { title: '会员', width: 140, render: (_: any, r: Member) => (
+      <div className="flex items-center gap-2">
+        <Avatar size={32} className="!text-lg" style={AVATAR_BG}>{r.avatar}</Avatar>
+        <div>
+          <div className="font-medium text-walnut-800">{r.name}</div>
+          <div className="text-xs text-walnut-400">{r.phone}</div>
+        </div>
+      </div>
+    )},
+    { title: '等级', dataIndex: 'level', width: 100, render: (v: MemberLevel) => <Tag color={LEVEL_COLORS[v]}>{v}</Tag> },
+    { title: '余额', dataIndex: 'balance', width: 100, align: 'right' as const, render: (v: number) => <span className="font-bold text-gold-600">¥{v}</span> },
+    { title: '积分', dataIndex: 'availablePoints', width: 90, render: (v) => <span className="text-purple-600">{v}</span> },
+    {
+      title: '最近到店', width: 120,
+      render: (_: any, r: Member) => {
+        const p = s.getMemberProfile(r.id);
+        return p.daysSinceLastVisit > 1000 ? <Tag>从未到店</Tag>
+          : p.daysSinceLastVisit > 30 ? <Tag color="orange">{p.daysSinceLastVisit}天前</Tag>
+          : <Tag color="green">{p.daysSinceLastVisit}天前</Tag>;
+      },
+    },
+    {
+      title: '经营标签', width: 180,
+      render: (_: any, r: Member) => {
+        const p = s.getMemberProfile(r.id);
+        const tags = [...(r.tags || []), ...p.suggestedTags].slice(0, 3);
+        return <Space size={[4, 4]} wrap>{tags.map(t => <Tag key={t} color="gold" className="!text-xs !py-0">{t}</Tag>)}</Space>;
+      },
+    },
+    {
+      title: '状态', width: 90,
+      render: (_: any, r: Member) => markedFollowed.has(r.id)
+        ? <Tag color="green" icon={<UserCheck size={12} />}>已跟进</Tag>
+        : <Tag color="orange">待联系</Tag>,
+    },
+    {
+      title: '操作', width: 180,
+      render: (_: any, r: Member) => (
+        <Space size="small">
+          <Button size="small" icon={<PhoneCall size={12} />} onClick={() => { followUpForm.resetFields(); setFollowUpModal({ open: true, member: r }); }}>
+            标记跟进
+          </Button>
+          <Button size="small" icon={<Eye size={12} />} onClick={() => setDetailDrawer({ open: true, member: r })}>详情</Button>
+        </Space>
+      ),
+    },
+  ];
+
+  return (
+    <div className="space-y-6 p-6">
+      <Card className="!rounded-2xl !shadow-sm" styles={CARD_STYLE}>
+        <Tabs
+          activeKey={activeTab}
+          onChange={k => setActiveTab(k as any)}
+          items={[
+            {
+              key: 'list',
+              label: <span className="flex items-center gap-1.5"><UserPlus size={16} />会员管理</span>,
+              children: (
+                <div className="flex flex-wrap items-center gap-4 pt-2">
+                  <Input
+                    prefix={<Search size={18} className="text-walnut-400" />}
+                    placeholder="搜索姓名或电话..."
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    className="!w-72"
+                    allowClear
+                  />
+                  <Select
+                    placeholder="等级筛选" allowClear
+                    value={levelFilter} onChange={setLevelFilter}
+                    className="!w-44"
+                    options={['普通会员', '银卡会员', '金卡会员', '钻石会员'].map((v) => ({ value: v, label: v }))}
+                  />
+                  <div className="flex-1" />
+                  <Button
+                    type="primary" icon={<Plus size={18} />}
+                    onClick={() => setCreateModal(true)}
+                    className="!h-10 !px-5 !font-semibold"
+                    {...GOLD_BTN}
+                  >
+                    新建会员
+                  </Button>
+                </div>
+              ),
+            },
+            {
+              key: 'marketing',
+              label: (
+                <span className="flex items-center gap-1.5">
+                  <Target size={16} />营销跟进
+                  <Badge count={marketingMembers.length} color="#D4AF37" />
+                </span>
+              ),
+              children: (
+                <div className="flex flex-wrap items-center gap-3 pt-2">
+                  <span className="text-walnut-500 text-sm flex items-center gap-1"><Filter size={12} />筛选：</span>
+                  <Select
+                    mode="multiple"
+                    placeholder="会员等级"
+                    value={mLevels}
+                    onChange={setMLevels}
+                    className="!min-w-[160px]"
+                    options={['普通会员', '银卡会员', '金卡会员', '钻石会员'].map(v => ({ label: v, value: v }))}
+                  />
+                  <InputNumber
+                    placeholder="最小余额"
+                    value={mMinBalance}
+                    onChange={v => setMMinBalance(v as number | null)}
+                    min={0}
+                    prefix="¥"
+                    className="!w-32"
+                  />
+                  <span className="text-walnut-400">-</span>
+                  <InputNumber
+                    placeholder="最大余额"
+                    value={mMaxBalance}
+                    onChange={v => setMMaxBalance(v as number | null)}
+                    min={0}
+                    prefix="¥"
+                    className="!w-32"
+                  />
+                  <Divider type="vertical" />
+                  <span className="text-walnut-500 text-sm">未到店天数：</span>
+                  <InputNumber
+                    placeholder="最少"
+                    value={mMinDays}
+                    onChange={v => setMMinDays(v as number | null)}
+                    min={0}
+                    className="!w-24"
+                    addonAfter="天"
+                  />
+                  <span className="text-walnut-400">-</span>
+                  <InputNumber
+                    placeholder="最多"
+                    value={mMaxDays}
+                    onChange={v => setMMaxDays(v as number | null)}
+                    min={0}
+                    className="!w-24"
+                    addonAfter="天"
+                  />
+                  <Select
+                    mode="multiple"
+                    placeholder="经营标签"
+                    value={mTags}
+                    onChange={setMTags}
+                    className="!min-w-[200px]"
+                    options={['老客', '高价值', '烫染客', '护理客', '久未到店'].map(v => ({ label: v, value: v }))}
+                  />
+                  <Button size="small" icon={<RefreshCw size={12} />} onClick={() => {
+                    setMLevels([]); setMMinBalance(null); setMMaxBalance(null); setMMinDays(null); setMMaxDays(null); setMTags([]); setMarkedFollowed(new Set());
+                  }}>
+                    重置
+                  </Button>
+                </div>
+              ),
+            },
+          ]}
+        />
       </Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {filteredMembers.map((m) => (
-          <Card
-            key={m.id}
-            className="!rounded-2xl !shadow-sm hover:!shadow-md transition-all"
-            styles={CARD_STYLE}
-          >
-            <div className="flex items-start gap-4">
-              <Avatar size={56} className="!text-3xl !rounded-xl" style={AVATAR_BG}>
-                {m.avatar}
-              </Avatar>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <h3 className="font-bold text-lg text-walnut-800 m-0 truncate">{m.name}</h3>
-                  <Tag color={LEVEL_COLORS[m.level]} className="!border-0 !font-medium">
-                    {m.level}
-                  </Tag>
-                </div>
-                <p className="text-sm text-walnut-500 m-0 mt-1">{m.phone}</p>
-                {m.noShowCount > 0 && (
-                  <div className="flex items-center gap-1 mt-2 text-xs text-orange-600">
-                    <AlertTriangle size={12} />
-                    <span>爽约 {m.noShowCount} 次{m.noShowCount >= 2 ? '（需关注）' : ''}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-            <Divider className="!my-4" />
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <div className="p-3 rounded-xl bg-gradient-to-br from-amber-50 to-yellow-50 border border-amber-100">
-                <div className="text-xs text-walnut-500">账户余额</div>
-                <div className="text-xl font-bold text-gold-600 mt-1">¥{m.balance}</div>
-              </div>
-              <div className="p-3 rounded-xl bg-gradient-to-br from-violet-50 to-purple-50 border border-violet-100">
-                <div className="text-xs text-walnut-500">可用积分</div>
-                <div className="text-xl font-bold text-purple-600 mt-1">{m.availablePoints}</div>
-              </div>
-            </div>
-            <Space className="!w-full">
-              <Button icon={<Wallet size={16} />} onClick={() => openRecharge(m)} className="!flex-1 !h-9">
-                充值
-              </Button>
-              <Button icon={<ShoppingBag size={16} />} onClick={() => openConsume(m)} className="!flex-1 !h-9">
-                消费
-              </Button>
-              <Button
-                type="primary" ghost icon={<Eye size={16} />}
-                onClick={() => setDetailDrawer({ open: true, member: m })}
-                className="!flex-1 !h-9"
+      {activeTab === 'list' ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {filteredMembers.map((m) => {
+            const p = s.getMemberProfile(m.id);
+            return (
+              <Card
+                key={m.id}
+                className="!rounded-2xl !shadow-sm hover:!shadow-md transition-all"
+                styles={CARD_STYLE}
               >
-                详情
-              </Button>
-            </Space>
-          </Card>
-        ))}
-      </div>
+                <div className="flex items-start gap-4">
+                  <Avatar size={56} className="!text-3xl !rounded-xl" style={AVATAR_BG}>
+                    {m.avatar}
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-bold text-lg text-walnut-800 m-0 truncate">{m.name}</h3>
+                      <Tag color={LEVEL_COLORS[m.level]} className="!border-0 !font-medium">
+                        {m.level}
+                      </Tag>
+                    </div>
+                    <p className="text-sm text-walnut-500 m-0 mt-1">{m.phone}</p>
+                    {m.noShowCount > 0 && (
+                      <div className="flex items-center gap-1 mt-2 text-xs text-orange-600">
+                        <AlertTriangle size={12} />
+                        <span>爽约 {m.noShowCount} 次{m.noShowCount >= 2 ? '（需关注）' : ''}</span>
+                      </div>
+                    )}
+                    {(m.tags?.length || p.suggestedTags.length) > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {[...(m.tags || []), ...p.suggestedTags].slice(0, 3).map(t => (
+                          <Tag key={t} color="gold" className="!text-xs !py-0 !border-0">{t}</Tag>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <Divider className="!my-4" />
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div className="p-3 rounded-xl bg-gradient-to-br from-amber-50 to-yellow-50 border border-amber-100">
+                    <div className="text-xs text-walnut-500">账户余额</div>
+                    <div className="text-xl font-bold text-gold-600 mt-1">¥{m.balance}</div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-gradient-to-br from-violet-50 to-purple-50 border border-violet-100">
+                    <div className="text-xs text-walnut-500">可用积分</div>
+                    <div className="text-xl font-bold text-purple-600 mt-1">{m.availablePoints}</div>
+                  </div>
+                </div>
+                <Space className="!w-full">
+                  <Button icon={<Wallet size={16} />} onClick={() => openRecharge(m)} className="!flex-1 !h-9">
+                    充值
+                  </Button>
+                  <Button icon={<ShoppingBag size={16} />} onClick={() => openConsume(m)} className="!flex-1 !h-9">
+                    消费
+                  </Button>
+                  <Button
+                    type="primary" ghost icon={<Eye size={16} />}
+                    onClick={() => setDetailDrawer({ open: true, member: m })}
+                    className="!flex-1 !h-9"
+                  >
+                    详情
+                  </Button>
+                </Space>
+              </Card>
+            );
+          })}
+        </div>
+      ) : (
+        <Card className="!rounded-2xl !shadow-sm" styles={{ body: { padding: 16 } }}>
+          <div className="mb-3 flex justify-between items-center px-2">
+            <span className="text-walnut-600">
+              根据筛选条件找到 <span className="font-bold text-gold-600">{marketingMembers.length}</span> 位会员
+            </span>
+            <Button
+              size="small"
+              icon={<Megaphone size={14} />}
+              onClick={() => message.success(`已生成 ${marketingMembers.length} 条待联系名单`)}
+              disabled={marketingMembers.length === 0}
+            >
+              导出名单
+            </Button>
+          </div>
+          <Table
+            dataSource={marketingMembers}
+            columns={marketingColumns}
+            rowKey="id"
+            pagination={{ pageSize: 10, showSizeChanger: true }}
+            size="middle"
+          />
+        </Card>
+      )}
 
       {/* 新建会员 */}
       <Modal
@@ -301,68 +820,107 @@ export default function Members() {
           >
             <Select
               placeholder="请选择理发师"
-              options={s.barbers.map((b) => ({ value: b.id, label: `${b.avatar} ${b.name}` }))}
+              options={s.barbers.map(b => ({ label: `${b.avatar} ${b.name}`, value: b.id }))}
             />
           </Form.Item>
 
-          <div className={`p-4 rounded-xl border transition-all duration-300 ${
-            balanceInsufficient
-              ? 'bg-red-50 border-red-200'
-              : selectedPkgId
-                ? 'bg-gradient-to-br from-walnut-50 to-gold-50 border-gold-200'
-                : 'bg-gray-50 border-gray-200'
-          }`}>
-            <div className="space-y-2.5">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-walnut-500 flex items-center gap-1.5">
-                  <span>💰</span>消费金额
-                </span>
-                <span className={`font-bold text-lg ${selectedPkgId ? 'text-walnut-800' : 'text-gray-400'}`}>
-                  ¥{consumeAmount || '--'}
-                </span>
-              </div>
-
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-walnut-500 flex items-center gap-1.5">
-                  <Coins size={14} className="text-purple-500" />
-                  获得积分
-                  <span className="text-xs text-walnut-400">（{pointsPerYuan}积分/元）</span>
-                </span>
-                <span className={`font-bold ${selectedPkgId ? 'text-purple-600' : 'text-gray-400'}`}>
-                  +{selectedPkgId ? pointsEarned : '--'}
-                </span>
-              </div>
-
-              <Divider className="!my-2" />
-
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-walnut-500">当前余额</span>
-                <span className="text-sm text-gold-600">¥{currentBalance}</span>
-              </div>
-
-              <div className="flex justify-between items-center">
-                <span className={`font-semibold ${
-                  balanceInsufficient ? 'text-red-600' : 'text-walnut-700'
-                }`}>
-                  {selectedPkgId ? '消费后余额' : '请先选择套餐'}
-                </span>
-                <span className={`text-xl font-bold ${
-                  balanceInsufficient ? 'text-red-600' : selectedPkgId ? 'text-gold-600' : 'text-gray-400'
-                }`}>
-                  {selectedPkgId ? `¥${newBalance}` : '--'}
-                </span>
-              </div>
-
-              {balanceInsufficient && (
-                <div className="mt-2 p-2.5 rounded-lg bg-red-100/60 border border-red-200 flex items-start gap-2">
-                  <AlertTriangle size={16} className="text-red-600 flex-shrink-0 mt-0.5" />
-                  <div className="text-sm text-red-700">
-                    余额不足，还差 ¥{Math.abs(newBalance)}。请先充值后再消费。
+          {selectedPkgId && (
+            <div className={`p-4 rounded-xl border-2 mb-2 ${balanceInsufficient ? 'border-red-300 bg-red-50' : 'border-gold-200 bg-gradient-to-r from-amber-50 to-yellow-50'}`}>
+              <Row gutter={12}>
+                <Col span={12}>
+                  <div className="text-xs text-walnut-500">消费金额</div>
+                  <div className="text-xl font-bold text-walnut-700 mt-1">¥{consumeAmount}</div>
+                </Col>
+                <Col span={12}>
+                  <div className="text-xs text-walnut-500">获得积分</div>
+                  <div className="text-xl font-bold text-purple-600 mt-1">+{pointsEarned}</div>
+                </Col>
+              </Row>
+              <Divider className="!my-3" />
+              <Row gutter={12}>
+                <Col span={12}>
+                  <div className="text-xs text-walnut-500">当前余额</div>
+                  <div className="text-base font-semibold text-gold-600 mt-1">¥{currentBalance}</div>
+                </Col>
+                <Col span={12}>
+                  <div className="text-xs text-walnut-500">消费后余额</div>
+                  <div className={`text-base font-bold mt-1 ${balanceInsufficient ? 'text-red-600' : 'text-emerald-600'}`}>
+                    ¥{newBalance}
+                    {balanceInsufficient && <span className="text-xs ml-1">（不足 ¥{-newBalance}）</span>}
                   </div>
-                </div>
+                </Col>
+              </Row>
+              {balanceInsufficient && (
+                <Alert
+                  type="error"
+                  showIcon
+                  message="余额不足"
+                  description="请先充值或选择其他套餐"
+                  className="!mt-3"
+                />
               )}
             </div>
-          </div>
+          )}
+        </Form>
+      </Modal>
+
+      {/* 余额调整弹窗 */}
+      <Modal
+        title={<div className="flex items-center gap-2"><Receipt size={20} className="text-gold-500" /><span className="font-bold">调整余额 - {adjustModal.member?.name}</span></div>}
+        open={adjustModal.open}
+        onCancel={() => setAdjustModal({ open: false })}
+        onOk={confirmAdjust}
+        okText="确认调整"
+        okButtonProps={GOLD_BTN}
+      >
+        <Form form={adjustForm} layout="vertical" className="pt-2">
+          <Form.Item label="当前余额">
+            <div className="text-xl font-bold text-gold-600">¥{adjustModal.member?.balance || 0}</div>
+          </Form.Item>
+          <Form.Item
+            name="amount"
+            label="调整金额（正数补登，负数扣款）"
+            rules={[{ required: true, message: '请输入调整金额' }]}
+          >
+            <InputNumber className="!w-full !h-10" placeholder="例如：100 或 -50" prefix="¥" />
+          </Form.Item>
+          <Form.Item name="note" label="调整备注" rules={[{ required: true, message: '请输入备注' }]}>
+            <Input.TextArea rows={2} placeholder="说明调整原因，例如：活动赠送补登、商品购买扣款..." />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 跟进记录弹窗 */}
+      <Modal
+        title={<div className="flex items-center gap-2"><MessageCircle size={20} className="text-gold-500" /><span className="font-bold">记录跟进 - {followUpModal.member?.name}</span></div>}
+        open={followUpModal.open}
+        onCancel={() => setFollowUpModal({ open: false })}
+        onOk={confirmFollowUp}
+        okText="保存"
+        okButtonProps={GOLD_BTN}
+      >
+        <Form form={followUpForm} layout="vertical" className="pt-2">
+          <Form.Item
+            name="type"
+            label="跟进类型"
+            rules={[{ required: true, message: '请选择类型' }]}
+            initialValue="marketing"
+          >
+            <Select
+              options={[
+                { label: '🎯 营销推广', value: 'marketing' },
+                { label: '💝 客户关怀', value: 'care' },
+                { label: '📞 服务回访', value: 'callback' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item
+            name="content"
+            label="跟进内容"
+            rules={[{ required: true, message: '请输入跟进内容' }]}
+          >
+            <Input.TextArea rows={4} placeholder="记录本次沟通的内容、客户反馈、后续计划..." />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -376,69 +934,13 @@ export default function Members() {
         }
         open={detailDrawer.open}
         onClose={() => setDetailDrawer({ open: false })}
-        width={760}
+        width={780}
+        destroyOnClose
       >
         {detailDrawer.member && (() => {
           const m = detailDrawer.member;
           const records = getMemberRecords(m.id);
-          const balanceRecords = s.getMemberBalanceRecords(m.id);
-
-          const TYPE_META: Record<BalanceRecordType, { label: string; color: string; bg: string; icon: string }> = {
-            recharge: { label: '充值', color: 'gold', bg: 'bg-amber-50', icon: '💰' },
-            consume: { label: '消费', color: 'red', bg: 'bg-rose-50', icon: '🧾' },
-            bonus: { label: '赠送', color: 'green', bg: 'bg-emerald-50', icon: '🎁' },
-            adjust: { label: '调整', color: 'blue', bg: 'bg-blue-50', icon: '✏️' },
-          };
-
-          const balanceColumns = [
-            {
-              title: '时间', dataIndex: 'createdAt', width: 160,
-              render: (v: string) => <span className="text-walnut-600 text-sm">{v}</span>,
-            },
-            {
-              title: '类型', dataIndex: 'type', width: 90,
-              render: (v: BalanceRecordType) => {
-                const meta = TYPE_META[v];
-                return <Tag color={meta.color} className="!border-0 !font-medium">{meta.icon} {meta.label}</Tag>;
-              },
-            },
-            {
-              title: '变动金额', dataIndex: 'amount', width: 110, align: 'right' as const,
-              render: (v: number) => (
-                <span className={`font-bold ${v >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                  {v >= 0 ? '+' : ''}¥{v}
-                </span>
-              ),
-            },
-            {
-              title: '变动后余额', dataIndex: 'balanceAfter', width: 120, align: 'right' as const,
-              render: (v: number) => <span className="font-semibold text-gold-600">¥{v}</span>,
-            },
-            {
-              title: '说明', dataIndex: 'description',
-              render: (v: string, r: BalanceRecord) => {
-                let detail = '';
-                if (r.type === 'recharge' && r.relatedId) {
-                  const rec = records.recharge.find(x => x.id === r.relatedId);
-                  if (rec) detail = `（充¥${rec.rechargeAmount}送¥${rec.bonusAmount}）`;
-                } else if (r.type === 'consume' && r.relatedId) {
-                  const rec = records.consume.find(x => x.id === r.relatedId);
-                  if (rec) {
-                    const barber = s.barbers.find(b => b.id === rec.barberId);
-                    detail = `（${barber?.name || '理发师'}服务）`;
-                  }
-                } else if (r.type === 'bonus' && r.relatedId) {
-                  const rec = records.recharge.find(x => x.id === r.relatedId);
-                  if (rec) detail = `（对应充值¥${rec.rechargeAmount}）`;
-                }
-                return (
-                  <Tooltip title={v + detail}>
-                    <span className="text-walnut-700">{v}<span className="text-walnut-400 text-xs ml-1">{detail}</span></span>
-                  </Tooltip>
-                );
-              },
-            },
-          ];
+          const profile = s.getMemberProfile(m.id);
 
           return (
             <div className="space-y-5">
@@ -448,15 +950,22 @@ export default function Members() {
                     {m.avatar}
                   </Avatar>
                   <div className="flex-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <h2 className="font-bold text-xl m-0">{m.name}</h2>
                       <Tag color={LEVEL_COLORS[m.level]} className="!border-0 !font-medium">
                         {m.level}
                       </Tag>
+                      {m.noShowCount > 0 && (
+                        <Tag color="orange" icon={<AlertTriangle size={10} />}>爽约{m.noShowCount}次</Tag>
+                      )}
                     </div>
                     <p className="text-walnut-500 m-0 mt-1">{m.phone}</p>
                     <p className="text-xs text-walnut-400 m-0 mt-1">注册时间：{m.createdAt}</p>
                   </div>
+                  <Space>
+                    <Button icon={<Wallet size={14} />} onClick={() => openRecharge(m)}>充值</Button>
+                    <Button icon={<ShoppingBag size={14} />} onClick={() => openConsume(m)}>消费</Button>
+                  </Space>
                 </div>
                 <div className="grid grid-cols-3 gap-3 mt-5">
                   <div className="p-3 rounded-xl bg-amber-50 text-center">
@@ -473,76 +982,23 @@ export default function Members() {
                   </div>
                 </div>
               </Card>
+
+              <Card title={<span className="flex items-center gap-1.5"><Sparkles size={16} className="text-gold-500" />会员画像</span>} className="!rounded-2xl" styles={CARD_STYLE}>
+                {renderProfile(profile, m)}
+              </Card>
+
               <Tabs
                 defaultActiveKey="balance"
                 items={[
                   {
                     key: 'balance',
-                    label: <span className="flex items-center gap-1"><Receipt size={14} />余额流水 ({balanceRecords.length})</span>,
-                    children: (
-                      <div>
-                        <div className="mb-3 p-3 rounded-xl bg-walnut-50 border border-walnut-100 flex items-center justify-between text-sm">
-                          <span className="text-walnut-500">
-                            <ChevronRight size={14} className="inline -mt-0.5" />
-                            按时间倒序展示所有余额变动（充值、消费、赠送）
-                          </span>
-                          <span className="text-walnut-400">当前余额：<span className="font-bold text-gold-600">¥{m.balance}</span></span>
-                        </div>
-                        <Table
-                          size="small"
-                          dataSource={balanceRecords}
-                          rowKey="id"
-                          pagination={{ pageSize: 10, showSizeChanger: true }}
-                          columns={balanceColumns}
-                          rowClassName={(r) => TYPE_META[r.type].bg}
-                          expandable={{
-                            expandedRowRender: (r: BalanceRecord) => {
-                              let extra: { label: string; value: string }[] = [];
-                              if (r.relatedId) {
-                                if (r.type === 'recharge' || r.type === 'bonus') {
-                                  const rec = records.recharge.find(x => x.id === r.relatedId);
-                                  if (rec) {
-                                    extra = [
-                                      { label: '充值单号', value: rec.id },
-                                      { label: '充值本金', value: `¥${rec.rechargeAmount}` },
-                                      { label: '赠送金额', value: `¥${rec.bonusAmount}` },
-                                      { label: '到账总额', value: `¥${rec.rechargeAmount + rec.bonusAmount}` },
-                                      { label: '记录时间', value: rec.createdAt },
-                                    ];
-                                  }
-                                } else if (r.type === 'consume') {
-                                  const rec = records.consume.find(x => x.id === r.relatedId);
-                                  if (rec) {
-                                    const barber = s.barbers.find(b => b.id === rec.barberId);
-                                    const pkg = s.servicePackages.find(p => p.id === rec.packageId);
-                                    extra = [
-                                      { label: '消费单号', value: rec.id },
-                                      { label: '服务项目', value: rec.note || pkg?.name || '-' },
-                                      { label: '理发师', value: barber ? `${barber.avatar} ${barber.name}` : '-' },
-                                      { label: '消费金额', value: `¥${rec.amount}` },
-                                      { label: '获得积分', value: `+${rec.pointsEarned}` },
-                                      { label: '记录时间', value: rec.createdAt },
-                                    ];
-                                  }
-                                }
-                              }
-                              if (extra.length === 0) return <p className="text-walnut-400 text-sm">无附加信息</p>;
-                              return (
-                                <div className="grid grid-cols-2 gap-2 py-1">
-                                  {extra.map(e => (
-                                    <div key={e.label} className="flex gap-2 text-sm">
-                                      <span className="text-walnut-400 min-w-[80px]">{e.label}：</span>
-                                      <span className="text-walnut-700 font-medium">{e.value}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              );
-                            },
-                            rowExpandable: (r: BalanceRecord) => !!r.relatedId,
-                          }}
-                        />
-                      </div>
-                    ),
+                    label: <span className="flex items-center gap-1"><Receipt size={14} />余额流水</span>,
+                    children: renderBalanceTab(m),
+                  },
+                  {
+                    key: 'followup',
+                    label: <span className="flex items-center gap-1"><MessageCircle size={14} />跟进记录</span>,
+                    children: renderFollowUpTab(m),
                   },
                   {
                     key: 'recharge',

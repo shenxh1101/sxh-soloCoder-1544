@@ -15,6 +15,8 @@ import type {
   AppointmentStatus,
   MemberLevel,
   BalanceRecord,
+  FollowUpRecord,
+  MemberProfile,
 } from '@/types';
 import {
   initialBarbers,
@@ -28,6 +30,7 @@ import {
   generateInitialPointsRecords,
   generateInitialExchangeRecords,
   generateInitialBalanceRecords,
+  generateInitialFollowUpRecords,
 } from '@/utils/mockData';
 
 const genId = () => Math.random().toString(36).substring(2, 10);
@@ -46,6 +49,7 @@ const initConsumptionRecords = generateInitialConsumptionRecords(initMembers, in
 const initPointsRecords = generateInitialPointsRecords(initMembers);
 const initExchangeRecords = generateInitialExchangeRecords(initMembers, initialPointsRule.exchangeItems);
 const initBalanceRecords = generateInitialBalanceRecords(initMembers, initRechargeRecords, initConsumptionRecords);
+const initFollowUpRecords = generateInitialFollowUpRecords(initMembers);
 
 interface AppState {
   barbers: Barber[];
@@ -56,6 +60,7 @@ interface AppState {
   pointsRecords: PointsRecord[];
   exchangeRecords: ExchangeRecord[];
   balanceRecords: BalanceRecord[];
+  followUpRecords: FollowUpRecord[];
   servicePackages: ServicePackage[];
   rechargeRules: RechargeRule[];
   pointsRule: PointsRule;
@@ -90,6 +95,22 @@ interface AppState {
   };
   getMonthlyRevenue: () => { month: string; revenue: number }[];
   getMemberBalanceRecords: (memberId: string) => BalanceRecord[];
+
+  getMemberProfile: (memberId: string) => MemberProfile;
+  addFollowUpRecord: (data: Omit<FollowUpRecord, 'id' | 'contactedAt'>) => void;
+  getFollowUpRecords: (memberId: string) => FollowUpRecord[];
+  linkAppointmentConsumption: (appointmentId: string, consumptionId: string, followUpNote?: string) => void;
+  adjustMemberBalance: (memberId: string, amount: number, description: string) => boolean;
+  filterMarketingMembers: (filters: {
+    levels?: MemberLevel[];
+    minBalance?: number;
+    maxBalance?: number;
+    minDaysNotVisited?: number;
+    maxDaysNotVisited?: number;
+    tags?: string[];
+  }) => Member[];
+  addMemberTag: (memberId: string, tag: string) => void;
+  removeMemberTag: (memberId: string, tag: string) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -103,6 +124,7 @@ export const useAppStore = create<AppState>()(
       pointsRecords: initPointsRecords,
       exchangeRecords: initExchangeRecords,
       balanceRecords: initBalanceRecords,
+      followUpRecords: initFollowUpRecords,
       servicePackages: initialServicePackages,
       rechargeRules: initialRechargeRules,
       pointsRule: initialPointsRule,
@@ -489,7 +511,135 @@ export const useAppStore = create<AppState>()(
       getMemberBalanceRecords: (memberId) => {
         return get().balanceRecords
           .filter((r) => r.memberId === memberId)
-          .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      },
+
+      getMemberProfile: (memberId) => {
+        const state = get();
+        const consumptions = state.consumptionRecords.filter(r => r.memberId === memberId);
+        const appoints = state.appointments.filter(a => a.memberId === memberId && a.status === 'completed');
+        const all = [...consumptions, ...appoints.map(a => ({ createdAt: `${a.date} ${a.startTime}` }))].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        const lastVisit = all[0]?.createdAt?.substring(0, 10) || state.members.find(m => m.id === memberId)?.createdAt?.substring(0, 10) || '-';
+        const daysSince = lastVisit !== '-' ? dayjs().diff(dayjs(lastVisit), 'day') : 9999;
+        const totalSpend = consumptions.reduce((s, r) => s + r.amount, 0);
+        const visitCount = Math.max(consumptions.length, appoints.length);
+        const avgSpend = visitCount > 0 ? Math.round(totalSpend / visitCount) : 0;
+
+        const svcCount: Record<string, number> = {};
+        consumptions.forEach(c => {
+          const name = c.note || state.servicePackages.find(p => p.id === c.packageId)?.name || '其他服务';
+          svcCount[name] = (svcCount[name] || 0) + 1;
+        });
+        const frequentServices = Object.entries(svcCount)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([name, count]) => ({ name, count }));
+
+        const spendLevel: MemberProfile['spendLevel'] = totalSpend >= 2000 ? '高消费' : totalSpend >= 800 ? '中消费' : '低消费';
+        const freqLevel: MemberProfile['freqLevel'] = visitCount >= 12 ? '忠实' : visitCount >= 6 ? '常客' : visitCount >= 3 ? '一般' : '偶尔';
+
+        const tags: string[] = [];
+        if (freqLevel === '忠实' || freqLevel === '常客') tags.push('老客');
+        if (spendLevel === '高消费') tags.push('高价值');
+        if (frequentServices.some(s => s.name.includes('烫') || s.name.includes('染'))) tags.push('烫染客');
+        if (frequentServices.some(s => s.name.includes('护'))) tags.push('护理客');
+        if (daysSince > 30) tags.push('久未到店');
+
+        return {
+          memberId,
+          frequentServices,
+          lastVisitDate: lastVisit,
+          daysSinceLastVisit: daysSince,
+          visitCount,
+          avgSpend,
+          totalSpend,
+          spendLevel,
+          freqLevel,
+          suggestedTags: tags,
+        };
+      },
+
+      addFollowUpRecord: (data) => {
+        const now = dayjs().format('YYYY-MM-DD HH:mm');
+        set(state => ({
+          followUpRecords: [{ ...data, id: genId(), contactedAt: now }, ...state.followUpRecords],
+        }));
+      },
+
+      getFollowUpRecords: (memberId) => {
+        return get().followUpRecords.filter(r => r.memberId === memberId).sort((a, b) => b.contactedAt.localeCompare(a.contactedAt));
+      },
+
+      linkAppointmentConsumption: (appointmentId, consumptionId, followUpNote) => {
+        set(state => ({
+          appointments: state.appointments.map(a =>
+            a.id === appointmentId ? { ...a, consumptionId, followUpNote: followUpNote || a.followUpNote } : a
+          ),
+        }));
+      },
+
+      adjustMemberBalance: (memberId, amount, description) => {
+        const now = dayjs().format('YYYY-MM-DD HH:mm');
+        let success = false;
+        set(state => {
+          const member = state.members.find(m => m.id === memberId);
+          if (!member) return state;
+          const newBalance = member.balance + amount;
+          if (newBalance < 0) return state;
+          success = true;
+          return {
+            members: state.members.map(m => m.id === memberId ? { ...m, balance: newBalance } : m),
+            balanceRecords: [
+              {
+                id: genId(),
+                memberId,
+                type: 'adjust',
+                amount,
+                balanceAfter: newBalance,
+                description,
+                createdAt: now,
+              },
+              ...state.balanceRecords,
+            ],
+          };
+        });
+        return success;
+      },
+
+      filterMarketingMembers: (filters) => {
+        const state = get();
+        return state.members.filter(m => {
+          if (filters.levels && filters.levels.length > 0 && !filters.levels.includes(m.level)) return false;
+          if (filters.minBalance !== undefined && m.balance < filters.minBalance) return false;
+          if (filters.maxBalance !== undefined && m.balance > filters.maxBalance) return false;
+          if (filters.tags && filters.tags.length > 0) {
+            const profile = state.getMemberProfile(m.id);
+            const allTags = [...(m.tags || []), ...profile.suggestedTags];
+            if (!filters.tags.some(t => allTags.includes(t))) return false;
+          }
+          if (filters.minDaysNotVisited !== undefined || filters.maxDaysNotVisited !== undefined) {
+            const profile = state.getMemberProfile(m.id);
+            if (filters.minDaysNotVisited !== undefined && profile.daysSinceLastVisit < filters.minDaysNotVisited) return false;
+            if (filters.maxDaysNotVisited !== undefined && profile.daysSinceLastVisit > filters.maxDaysNotVisited) return false;
+          }
+          return true;
+        });
+      },
+
+      addMemberTag: (memberId, tag) => {
+        set(state => ({
+          members: state.members.map(m =>
+            m.id === memberId ? { ...m, tags: Array.from(new Set([...(m.tags || []), tag])) } : m
+          ),
+        }));
+      },
+
+      removeMemberTag: (memberId, tag) => {
+        set(state => ({
+          members: state.members.map(m =>
+            m.id === memberId ? { ...m, tags: (m.tags || []).filter(t => t !== tag) } : m
+          ),
+        }));
       },
     }),
     {

@@ -1,11 +1,13 @@
 import { useState, useMemo, useEffect } from 'react';
 import {
   Modal, Form, DatePicker, Select, TimePicker, Input, Button, message, Tag, Space,
-  Tooltip, Alert, Row, Col, Drawer, Table,
+  Tooltip, Alert, Row, Col, Drawer, Table, Empty,
 } from 'antd';
+const { TextArea } = Input;
 import {
   ChevronLeft, ChevronRight, CalendarPlus, CheckCircle2, XCircle, Ban, Clock, Phone,
   User, FileText, CalendarDays, AlertTriangle, Filter, RefreshCw, Edit3, Scissors,
+  ShoppingBag, MessageCircle, Receipt, Link2,
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
@@ -33,8 +35,72 @@ const STATUS_COLOR: Record<AppointmentStatus, string> = {
   confirmed: 'gold', completed: 'green', no_show: 'red', cancelled: 'default',
 };
 
+function LinkConsumptionSelect({ appointmentId, memberId }: { appointmentId: string; memberId: string }) {
+  const { consumptionRecords, servicePackages, barbers, linkAppointmentConsumption } = useAppStore();
+  const memberConsumptions = useMemo(
+    () => consumptionRecords.filter(c => c.memberId === memberId).slice(0, 20),
+    [consumptionRecords, memberId]
+  );
+  return (
+    <Select
+      placeholder="关联消费记录"
+      className="!w-52"
+      allowClear
+      size="small"
+      options={memberConsumptions.map(c => {
+        const pkg = servicePackages.find(p => p.id === c.packageId);
+        return {
+          label: `${c.createdAt.slice(5)} ¥${c.amount} ${c.note || pkg?.name || ''}`,
+          value: c.id,
+        };
+      })}
+      onChange={(val) => {
+        if (val) {
+          linkAppointmentConsumption(appointmentId, val);
+          message.success('已关联消费记录');
+        }
+      }}
+    />
+  );
+}
+
+function FollowUpNoteEditor({ appointmentId, note }: { appointmentId: string; note?: string }) {
+  const { updateAppointment } = useAppStore();
+  const [editing, setEditing] = useState(!note);
+  const [value, setValue] = useState(note || '');
+  const save = () => {
+    updateAppointment(appointmentId, { followUpNote: value });
+    setEditing(false);
+    message.success('回访备注已保存');
+  };
+  return (
+    <div>
+      {editing ? (
+        <div className="space-y-2">
+          <TextArea
+            rows={3}
+            value={value}
+            onChange={e => setValue(e.target.value)}
+            placeholder="记录客户反馈、满意度、后续建议..."
+          />
+          <Space>
+            <Button size="small" type="primary" onClick={save}>保存</Button>
+            {note && <Button size="small" onClick={() => { setEditing(false); setValue(note); }}>取消</Button>}
+          </Space>
+        </div>
+      ) : (
+        <div className="flex justify-between items-start">
+          <p className="text-sm text-walnut-700 m-0 whitespace-pre-wrap">{note}</p>
+          <Button size="small" type="link" onClick={() => setEditing(true)}>编辑</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Appointments() {
-  const { barbers, members, appointments, servicePackages, addAppointment, updateAppointmentStatus, markNoShow, rescheduleAppointment } = useAppStore();
+  const s = useAppStore();
+  const { barbers, members, appointments, servicePackages, addAppointment, updateAppointmentStatus, markNoShow, rescheduleAppointment, linkAppointmentConsumption, updateAppointment } = s;
   const [ws, setWs] = useState<Dayjs>(dayjs().startOf('week'));
   const [co, setCo] = useState(false);
   const [da, setDa] = useState<Appointment | null>(null);
@@ -630,12 +696,77 @@ export default function Appointments() {
                 </div>
               ))}
             </div>
+
+            {/* 消费关联 */}
+            <div className="p-4 rounded-xl border-2 border-emerald-200 bg-gradient-to-r from-emerald-50 to-teal-50">
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-walnut-700 font-semibold flex items-center gap-1.5">
+                  <ShoppingBag size={16} className="text-emerald-500" />
+                  到店消费转化
+                </div>
+                {da.status === 'completed' && !da.consumptionId && da.memberId && (
+                  <LinkConsumptionSelect
+                    appointmentId={da.id}
+                    memberId={da.memberId}
+                  />
+                )}
+              </div>
+              {da.consumptionId ? (() => {
+                const rec = s.consumptionRecords.find(c => c.id === da.consumptionId);
+                if (!rec) return <Empty description="关联的消费记录不存在" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+                const barber = s.barbers.find(b => b.id === rec.barberId);
+                const pkg = s.servicePackages.find(p => p.id === rec.packageId);
+                return (
+                  <div className="bg-white/70 rounded-lg p-3 space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-walnut-500">消费项目</span>
+                      <span className="font-medium text-walnut-800">{rec.note || pkg?.name || '-'}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-walnut-500">服务理发师</span>
+                      <span className="font-medium text-walnut-800">{barber ? `${barber.avatar} ${barber.name}` : '-'}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-walnut-500">消费金额</span>
+                      <span className="font-bold text-rose-600">¥{rec.amount}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-walnut-500">获得积分</span>
+                      <span className="font-semibold text-purple-600">+{rec.pointsEarned}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-walnut-500">消费时间</span>
+                      <span className="text-walnut-600">{rec.createdAt}</span>
+                    </div>
+                  </div>
+                );
+              })() : (
+                <div className="text-sm text-walnut-500">
+                  {da.status !== 'completed'
+                    ? '预约完成后可关联消费记录'
+                    : da.memberId
+                      ? '尚未关联消费记录，可点击右侧按钮关联'
+                      : '非会员客户无法关联消费'}
+                </div>
+              )}
+            </div>
+
+            {/* 回访记录 */}
+            <div className="p-4 rounded-xl border-2 border-purple-200 bg-gradient-to-r from-purple-50 to-violet-50">
+              <div className="text-walnut-700 font-semibold mb-3 flex items-center gap-1.5">
+                <MessageCircle size={16} className="text-purple-500" />
+                回访备注
+              </div>
+              <FollowUpNoteEditor appointmentId={da.id} note={da.followUpNote} />
+            </div>
+
             {da.note && (
               <div className="p-3 rounded-lg bg-gold-50 border border-gold-200">
-                <div className="text-walnut-500 mb-1 text-sm flex items-center gap-1"><FileText size={14} />备注</div>
+                <div className="text-walnut-500 mb-1 text-sm flex items-center gap-1"><FileText size={14} />预约备注</div>
                 <div className="text-walnut-800">{da.note}</div>
               </div>
             )}
+
             {(() => {
               const m = members.find(mm => mm.id === da.memberId);
               if (!m) return null;
