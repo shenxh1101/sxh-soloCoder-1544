@@ -10,6 +10,7 @@ import type {
   ServicePackage,
   RechargeRule,
   PointsRule,
+  BalanceRecord,
 } from '@/types';
 
 const genId = () => Math.random().toString(36).substring(2, 10);
@@ -220,4 +221,76 @@ export const generateInitialExchangeRecords = (members: Member[], items: PointsR
     });
   });
   return records;
+};
+
+export const generateInitialBalanceRecords = (
+  members: Member[],
+  rechargeRecords: RechargeRecord[],
+  consumptionRecords: ConsumptionRecord[]
+): BalanceRecord[] => {
+  const records: BalanceRecord[] = [];
+  members.forEach((member) => {
+    const mRecharges = rechargeRecords.filter((r) => r.memberId === member.id);
+    const mConsumptions = consumptionRecords.filter((r) => r.memberId === member.id);
+    const all: (BalanceRecord & { sortTime: string })[] = [];
+
+    mRecharges.forEach((r) => {
+      all.push({
+        id: genId(),
+        memberId: member.id,
+        type: 'recharge',
+        amount: r.rechargeAmount,
+        balanceAfter: 0,
+        description: `充值 ¥${r.rechargeAmount}`,
+        relatedId: r.id,
+        createdAt: r.createdAt,
+        sortTime: r.createdAt,
+      });
+      if (r.bonusAmount > 0) {
+        all.push({
+          id: genId(),
+          memberId: member.id,
+          type: 'bonus',
+          amount: r.bonusAmount,
+          balanceAfter: 0,
+          description: `充值赠送 ¥${r.bonusAmount}`,
+          relatedId: r.id,
+          createdAt: r.createdAt,
+          sortTime: r.createdAt + '1',
+        });
+      }
+    });
+
+    mConsumptions.forEach((c) => {
+      all.push({
+        id: genId(),
+        memberId: member.id,
+        type: 'consume',
+        amount: -c.amount,
+        balanceAfter: 0,
+        description: `消费「${c.note || '服务项目'}」`,
+        relatedId: c.id,
+        createdAt: c.createdAt,
+        sortTime: c.createdAt,
+      });
+    });
+
+    all.sort((a, b) => a.sortTime.localeCompare(b.sortTime));
+    let running = 0;
+    all.forEach((r) => {
+      running += r.amount;
+      r.balanceAfter = running;
+      records.push({
+        id: r.id,
+        memberId: r.memberId,
+        type: r.type,
+        amount: r.amount,
+        balanceAfter: r.balanceAfter,
+        description: r.description,
+        relatedId: r.relatedId,
+        createdAt: r.createdAt,
+      });
+    });
+  });
+  return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 };

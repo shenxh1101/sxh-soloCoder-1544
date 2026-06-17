@@ -110,6 +110,19 @@ export interface ExchangeItem {
   icon: string;
 }
 
+export type BalanceRecordType = 'recharge' | 'consume' | 'bonus' | 'adjust';
+
+export interface BalanceRecord {
+  id: string;
+  memberId: string;
+  type: BalanceRecordType;
+  amount: number;
+  balanceAfter: number;
+  description: string;
+  relatedId?: string;
+  createdAt: string;
+}
+
 export interface StatisticsData {
   barberStats: {
     barberId: string;

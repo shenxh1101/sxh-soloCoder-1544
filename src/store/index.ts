@@ -14,6 +14,7 @@ import type {
   PointsRule,
   AppointmentStatus,
   MemberLevel,
+  BalanceRecord,
 } from '@/types';
 import {
   initialBarbers,
@@ -26,6 +27,7 @@ import {
   generateInitialConsumptionRecords,
   generateInitialPointsRecords,
   generateInitialExchangeRecords,
+  generateInitialBalanceRecords,
 } from '@/utils/mockData';
 
 const genId = () => Math.random().toString(36).substring(2, 10);
@@ -43,6 +45,7 @@ const initRechargeRecords = generateInitialRechargeRecords(initMembers);
 const initConsumptionRecords = generateInitialConsumptionRecords(initMembers, initialServicePackages, initialBarbers);
 const initPointsRecords = generateInitialPointsRecords(initMembers);
 const initExchangeRecords = generateInitialExchangeRecords(initMembers, initialPointsRule.exchangeItems);
+const initBalanceRecords = generateInitialBalanceRecords(initMembers, initRechargeRecords, initConsumptionRecords);
 
 interface AppState {
   barbers: Barber[];
@@ -52,6 +55,7 @@ interface AppState {
   consumptionRecords: ConsumptionRecord[];
   pointsRecords: PointsRecord[];
   exchangeRecords: ExchangeRecord[];
+  balanceRecords: BalanceRecord[];
   servicePackages: ServicePackage[];
   rechargeRules: RechargeRule[];
   pointsRule: PointsRule;
@@ -63,6 +67,7 @@ interface AppState {
   updateAppointment: (id: string, data: Partial<Appointment>) => void;
   updateAppointmentStatus: (id: string, status: AppointmentStatus) => void;
   markNoShow: (id: string) => void;
+  rescheduleAppointment: (id: string, data: { date: string; startTime: string; endTime: string; barberId: string }) => boolean;
 
   rechargeMember: (memberId: string, ruleId: string | undefined, amount: number, bonus: number) => void;
   consumeMember: (memberId: string, barberId: string | undefined, packageId: string | undefined, amount: number, note?: string) => void;
@@ -84,6 +89,7 @@ interface AppState {
     packageStats: { packageId: string; packageName: string; category: string; count: number; revenue: number }[];
   };
   getMonthlyRevenue: () => { month: string; revenue: number }[];
+  getMemberBalanceRecords: (memberId: string) => BalanceRecord[];
 }
 
 export const useAppStore = create<AppState>()(
@@ -96,6 +102,7 @@ export const useAppStore = create<AppState>()(
       consumptionRecords: initConsumptionRecords,
       pointsRecords: initPointsRecords,
       exchangeRecords: initExchangeRecords,
+      balanceRecords: initBalanceRecords,
       servicePackages: initialServicePackages,
       rechargeRules: initialRechargeRules,
       pointsRule: initialPointsRule,
@@ -161,19 +168,44 @@ export const useAppStore = create<AppState>()(
       rechargeMember: (memberId, ruleId, amount, bonus) => {
         const now = dayjs().format('YYYY-MM-DD HH:mm');
         const expireDate = calcExpireDate(get().pointsRule);
+        const rechargeRecId = genId();
         set((state) => {
           const member = state.members.find((m) => m.id === memberId);
           if (!member) return state;
           const newBalance = member.balance + amount + bonus;
           const newLevel: MemberLevel =
             newBalance > 2000 ? '钻石会员' : newBalance > 800 ? '金卡会员' : newBalance > 300 ? '银卡会员' : '普通会员';
+          const newBalanceRecords: BalanceRecord[] = [
+            {
+              id: genId(),
+              memberId,
+              type: 'recharge',
+              amount,
+              balanceAfter: member.balance + amount,
+              description: `充值 ¥${amount}`,
+              relatedId: rechargeRecId,
+              createdAt: now,
+            },
+          ];
+          if (bonus > 0) {
+            newBalanceRecords.push({
+              id: genId(),
+              memberId,
+              type: 'bonus',
+              amount: bonus,
+              balanceAfter: newBalance,
+              description: `充值赠送 ¥${bonus}`,
+              relatedId: rechargeRecId,
+              createdAt: now,
+            });
+          }
           return {
             members: state.members.map((m) =>
               m.id === memberId ? { ...m, balance: newBalance, level: newLevel } : m
             ),
             rechargeRecords: [
               {
-                id: genId(),
+                id: rechargeRecId,
                 memberId,
                 rechargeAmount: amount,
                 bonusAmount: bonus,
@@ -182,6 +214,7 @@ export const useAppStore = create<AppState>()(
               },
               ...state.rechargeRecords,
             ],
+            balanceRecords: [...newBalanceRecords, ...state.balanceRecords],
             pointsRecords:
               bonus > 0
                 ? [
@@ -207,6 +240,7 @@ export const useAppStore = create<AppState>()(
         const pointsPerYuan = rule.pointsPerYuan;
         const pointsEarned = Math.floor(amount * pointsPerYuan);
         const expireDate = calcExpireDate(rule);
+        const consumeRecId = genId();
 
         set((state) => {
           const member = state.members.find((m) => m.id === memberId);
@@ -228,7 +262,7 @@ export const useAppStore = create<AppState>()(
             ),
             consumptionRecords: [
               {
-                id: genId(),
+                id: consumeRecId,
                 memberId,
                 barberId,
                 packageId,
@@ -238,6 +272,19 @@ export const useAppStore = create<AppState>()(
                 note,
               },
               ...state.consumptionRecords,
+            ],
+            balanceRecords: [
+              {
+                id: genId(),
+                memberId,
+                type: 'consume',
+                amount: -amount,
+                balanceAfter: newBalance,
+                description: `消费「${note || '服务项目'}」`,
+                relatedId: consumeRecId,
+                createdAt: now,
+              },
+              ...state.balanceRecords,
             ],
             pointsRecords: [
               {
@@ -412,6 +459,37 @@ export const useAppStore = create<AppState>()(
           result.push({ month: dayjs().subtract(i, 'month').format('MM月'), revenue });
         }
         return result;
+      },
+
+      rescheduleAppointment: (id, data) => {
+        const state = get();
+        const { date, startTime, endTime, barberId } = data;
+        const T2I = (t: string) => { const [h, m] = t.split(':').map(Number); return (h - 9) * 2 + (m >= 30 ? 1 : 0); };
+        const startIdx = T2I(startTime);
+        const endIdx = T2I(endTime);
+
+        const hasConflict = state.appointments.some((a) => {
+          if (a.id === id) return false;
+          if (a.barberId !== barberId || a.date !== date || a.status === 'cancelled') return false;
+          const aStart = T2I(a.startTime);
+          const aEnd = T2I(a.endTime);
+          return !(startIdx >= aEnd || endIdx <= aStart);
+        });
+
+        if (hasConflict) return false;
+
+        set((s) => ({
+          appointments: s.appointments.map((a) =>
+            a.id === id ? { ...a, date, startTime, endTime, barberId } : a
+          ),
+        }));
+        return true;
+      },
+
+      getMemberBalanceRecords: (memberId) => {
+        return get().balanceRecords
+          .filter((r) => r.memberId === memberId)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
       },
     }),
     {

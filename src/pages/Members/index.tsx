@@ -1,11 +1,11 @@
 import { useState, useMemo } from 'react';
 import {
   Input, Select, Button, Card, Tag, Modal, Drawer, Table, Form, InputNumber,
-  Avatar, Space, message, Divider, Tabs
+  Avatar, Space, message, Divider, Tabs, Tooltip
 } from 'antd';
-import { Search, Plus, Wallet, ShoppingBag, Eye, UserPlus, AlertTriangle, Coins } from 'lucide-react';
+import { Search, Plus, Wallet, ShoppingBag, Eye, UserPlus, AlertTriangle, Coins, Receipt, ChevronRight } from 'lucide-react';
 import { useAppStore } from '@/store';
-import type { Member, MemberLevel } from '@/types';
+import type { Member, MemberLevel, BalanceRecord, BalanceRecordType } from '@/types';
 
 const LEVEL_COLORS: Record<MemberLevel, string> = {
   '普通会员': 'default', '银卡会员': 'blue', '金卡会员': 'gold', '钻石会员': 'purple',
@@ -376,11 +376,70 @@ export default function Members() {
         }
         open={detailDrawer.open}
         onClose={() => setDetailDrawer({ open: false })}
-        width={720}
+        width={760}
       >
         {detailDrawer.member && (() => {
           const m = detailDrawer.member;
           const records = getMemberRecords(m.id);
+          const balanceRecords = s.getMemberBalanceRecords(m.id);
+
+          const TYPE_META: Record<BalanceRecordType, { label: string; color: string; bg: string; icon: string }> = {
+            recharge: { label: '充值', color: 'gold', bg: 'bg-amber-50', icon: '💰' },
+            consume: { label: '消费', color: 'red', bg: 'bg-rose-50', icon: '🧾' },
+            bonus: { label: '赠送', color: 'green', bg: 'bg-emerald-50', icon: '🎁' },
+            adjust: { label: '调整', color: 'blue', bg: 'bg-blue-50', icon: '✏️' },
+          };
+
+          const balanceColumns = [
+            {
+              title: '时间', dataIndex: 'createdAt', width: 160,
+              render: (v: string) => <span className="text-walnut-600 text-sm">{v}</span>,
+            },
+            {
+              title: '类型', dataIndex: 'type', width: 90,
+              render: (v: BalanceRecordType) => {
+                const meta = TYPE_META[v];
+                return <Tag color={meta.color} className="!border-0 !font-medium">{meta.icon} {meta.label}</Tag>;
+              },
+            },
+            {
+              title: '变动金额', dataIndex: 'amount', width: 110, align: 'right' as const,
+              render: (v: number) => (
+                <span className={`font-bold ${v >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  {v >= 0 ? '+' : ''}¥{v}
+                </span>
+              ),
+            },
+            {
+              title: '变动后余额', dataIndex: 'balanceAfter', width: 120, align: 'right' as const,
+              render: (v: number) => <span className="font-semibold text-gold-600">¥{v}</span>,
+            },
+            {
+              title: '说明', dataIndex: 'description',
+              render: (v: string, r: BalanceRecord) => {
+                let detail = '';
+                if (r.type === 'recharge' && r.relatedId) {
+                  const rec = records.recharge.find(x => x.id === r.relatedId);
+                  if (rec) detail = `（充¥${rec.rechargeAmount}送¥${rec.bonusAmount}）`;
+                } else if (r.type === 'consume' && r.relatedId) {
+                  const rec = records.consume.find(x => x.id === r.relatedId);
+                  if (rec) {
+                    const barber = s.barbers.find(b => b.id === rec.barberId);
+                    detail = `（${barber?.name || '理发师'}服务）`;
+                  }
+                } else if (r.type === 'bonus' && r.relatedId) {
+                  const rec = records.recharge.find(x => x.id === r.relatedId);
+                  if (rec) detail = `（对应充值¥${rec.rechargeAmount}）`;
+                }
+                return (
+                  <Tooltip title={v + detail}>
+                    <span className="text-walnut-700">{v}<span className="text-walnut-400 text-xs ml-1">{detail}</span></span>
+                  </Tooltip>
+                );
+              },
+            },
+          ];
+
           return (
             <div className="space-y-5">
               <Card className="!rounded-2xl" styles={CARD_STYLE}>
@@ -415,7 +474,76 @@ export default function Members() {
                 </div>
               </Card>
               <Tabs
+                defaultActiveKey="balance"
                 items={[
+                  {
+                    key: 'balance',
+                    label: <span className="flex items-center gap-1"><Receipt size={14} />余额流水 ({balanceRecords.length})</span>,
+                    children: (
+                      <div>
+                        <div className="mb-3 p-3 rounded-xl bg-walnut-50 border border-walnut-100 flex items-center justify-between text-sm">
+                          <span className="text-walnut-500">
+                            <ChevronRight size={14} className="inline -mt-0.5" />
+                            按时间倒序展示所有余额变动（充值、消费、赠送）
+                          </span>
+                          <span className="text-walnut-400">当前余额：<span className="font-bold text-gold-600">¥{m.balance}</span></span>
+                        </div>
+                        <Table
+                          size="small"
+                          dataSource={balanceRecords}
+                          rowKey="id"
+                          pagination={{ pageSize: 10, showSizeChanger: true }}
+                          columns={balanceColumns}
+                          rowClassName={(r) => TYPE_META[r.type].bg}
+                          expandable={{
+                            expandedRowRender: (r: BalanceRecord) => {
+                              let extra: { label: string; value: string }[] = [];
+                              if (r.relatedId) {
+                                if (r.type === 'recharge' || r.type === 'bonus') {
+                                  const rec = records.recharge.find(x => x.id === r.relatedId);
+                                  if (rec) {
+                                    extra = [
+                                      { label: '充值单号', value: rec.id },
+                                      { label: '充值本金', value: `¥${rec.rechargeAmount}` },
+                                      { label: '赠送金额', value: `¥${rec.bonusAmount}` },
+                                      { label: '到账总额', value: `¥${rec.rechargeAmount + rec.bonusAmount}` },
+                                      { label: '记录时间', value: rec.createdAt },
+                                    ];
+                                  }
+                                } else if (r.type === 'consume') {
+                                  const rec = records.consume.find(x => x.id === r.relatedId);
+                                  if (rec) {
+                                    const barber = s.barbers.find(b => b.id === rec.barberId);
+                                    const pkg = s.servicePackages.find(p => p.id === rec.packageId);
+                                    extra = [
+                                      { label: '消费单号', value: rec.id },
+                                      { label: '服务项目', value: rec.note || pkg?.name || '-' },
+                                      { label: '理发师', value: barber ? `${barber.avatar} ${barber.name}` : '-' },
+                                      { label: '消费金额', value: `¥${rec.amount}` },
+                                      { label: '获得积分', value: `+${rec.pointsEarned}` },
+                                      { label: '记录时间', value: rec.createdAt },
+                                    ];
+                                  }
+                                }
+                              }
+                              if (extra.length === 0) return <p className="text-walnut-400 text-sm">无附加信息</p>;
+                              return (
+                                <div className="grid grid-cols-2 gap-2 py-1">
+                                  {extra.map(e => (
+                                    <div key={e.label} className="flex gap-2 text-sm">
+                                      <span className="text-walnut-400 min-w-[80px]">{e.label}：</span>
+                                      <span className="text-walnut-700 font-medium">{e.value}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            },
+                            rowExpandable: (r: BalanceRecord) => !!r.relatedId,
+                          }}
+                        />
+                      </div>
+                    ),
+                  },
                   {
                     key: 'recharge',
                     label: `充值记录 (${records.recharge.length})`,
